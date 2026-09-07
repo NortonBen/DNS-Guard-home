@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    name: Go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true
+
+      # Gói internal/web nhúng thư mục này, nên nó phải tồn tại trước khi biên dịch.
+      # CI không cần giao diện thật để chạy test backend.
+      - name: Tạo chỗ giữ chỗ cho giao diện
+        run: mkdir -p internal/web/assets && touch internal/web/assets/.gitkeep
+
+      - name: Kiểm tra định dạng
+        run: test -z "$(gofmt -l ./cmd ./internal ./tools)" || (gofmt -l ./cmd ./internal ./tools; exit 1)
+
+      - run: go vet ./...
+
+      - uses: dominikh/staticcheck-action@v1
+        with:
+          version: latest
+          install-go: false
+
+      # -race bắt được tranh chấp giữa vòng đọc socket và vòng ghi CSDL, thứ không
+      # bao giờ lộ ra khi chạy tuần tự.
+      - name: Test
+        run: go test ./... -race -count=1
+
+      - name: Biên dịch cho arm64
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build ./cmd/...
+
+  frontend:
+    name: TypeScript
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npx vite build
+
+  image:
+    name: Ảnh Docker
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Dựng ảnh multi-arch
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,0 +1,14 @@
+# Nạp lại backend khi sửa code Go. Không theo dõi thư mục web/ vì Vite đã lo phần đó.
+root = "."
+tmp_dir = ".air-tmp"
+
+[build]
+  cmd = "go build -o ./.air-tmp/dnsguard ./cmd/dnsguard"
+  bin = "./.air-tmp/dnsguard"
+  include_ext = ["go", "sql"]
+  exclude_dir = ["web", "bin", "data", "docs", "plans", ".air-tmp", "internal/web/assets"]
+  exclude_regex = ["_test\\.go"]
+  delay = 300
+
+[misc]
+  clean_on_exit = true

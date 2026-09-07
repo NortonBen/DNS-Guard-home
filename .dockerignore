@@ -1,0 +1,12 @@
+# Mọi thứ không cần cho việc biên dịch trong container.
+.git
+.github
+docs
+plans
+web/node_modules
+internal/web/assets
+bin
+*.db
+*.db-wal
+*.db-shm
+.env

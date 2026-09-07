@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="DNSGuard">
+  <title>DNSGuard</title>
+  <defs>
+    <linearGradient id="dg-fav" x1="7" y1="3" x2="57" y2="61" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#38bdf8"/>
+      <stop offset="0.55" stop-color="#0ea5e9"/>
+      <stop offset="1" stop-color="#0369a1"/>
+    </linearGradient>
+  </defs>
+  <path d="M32 3 56 12V33.5C56 46.6 46.4 56.8 32 61.4 17.6 56.8 8 46.6 8 33.5V12Z"
+        fill="url(#dg-fav)" stroke="url(#dg-fav)" stroke-width="3.4" stroke-linejoin="round"/>
+  <g fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M32 27.5v8.4"/>
+    <path d="M20 40v-4.1h24V40"/>
+  </g>
+  <g fill="#fff">
+    <circle cx="32" cy="23" r="6.4"/>
+    <circle cx="20" cy="44.4" r="5.4"/>
+    <circle cx="44" cy="44.4" r="5.4"/>
+  </g>
+</svg>

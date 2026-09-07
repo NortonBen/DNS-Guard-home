@@ -1,0 +1,36 @@
+[Unit]
+Description=DNSGuard — phân tích domain và sinh blocklist DNS
+Documentation=https://github.com/benji/dnsguard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dnsguard
+Group=dnsguard
+EnvironmentFile=-/etc/dnsguard/env
+ExecStart=/usr/local/bin/dnsguard
+Restart=always
+RestartSec=5
+
+# Cổng 37008/udp nằm trên 1024 nên không cần quyền đặc biệt nào.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+# Chỉ thư mục dữ liệu được ghi.
+ReadWritePaths=/var/lib/dnsguard
+
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

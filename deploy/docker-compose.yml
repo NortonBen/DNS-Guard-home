@@ -1,0 +1,61 @@
+# DNSGuard — một dịch vụ duy nhất, không phụ thuộc gì thêm.
+#
+# CSDL là SQLite nằm trong volume, giao diện nhúng sẵn trong binary, và hàng đợi job
+# chạy trên chính CSDL đó. Không có PostgreSQL, không có Redis, không có tiến trình
+# phụ trợ nào phải trông chừng.
+
+services:
+  dnsguard:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: dnsguard:latest
+    container_name: dnsguard
+    restart: unless-stopped
+
+    ports:
+      # Giao diện web và endpoint danh sách cho router.
+      - '8080:8080'
+      # Cổng nhận luồng mirror TZSP từ router. Phải là UDP.
+      - '37008:37008/udp'
+
+    environment:
+      DNSGUARD_LISTEN: ':8080'
+      DNSGUARD_TZSP_LISTEN: ':37008'
+
+      # Thời gian một domain nằm ở trạng thái chờ trước khi tự động bị chặn.
+      DNSGUARD_STAGING_DAYS: '7'
+      # Domain đã chặn chỉ hết hạn sau ngần này ngày không xuất hiện.
+      DNSGUARD_CONFIRM_TTL_DAYS: '180'
+      # Query log chứa dữ liệu về hành vi người dùng; xóa sau 90 ngày.
+      DNSGUARD_LOG_RETENTION_DAYS: '90'
+
+      # Chặn xuất bản nếu số lượng sụt dưới 50% so với lần trước.
+      DNSGUARD_PUBLISH_MIN_RATIO: '0.5'
+
+      # Đặt false để không gửi bất kỳ truy vấn nào ra Internet ngoài phân giải DNS.
+      DNSGUARD_EXTERNAL_ENABLED: 'true'
+
+      # Chỉ các dải IP này tải được /lists/*.txt. Bỏ trống là cho phép tất cả.
+      DNSGUARD_LISTS_ALLOW_CIDR: '192.168.0.0/16,10.0.0.0/8,172.16.0.0/12'
+
+      DNSGUARD_LOG_LEVEL: 'info'
+
+      # Mật khẩu quản trị đầu tiên. Bỏ dòng này thì hệ thống tự sinh và in ra log.
+      # DNSGUARD_ADMIN_PASSWORD: 'đặt-mật-khẩu-ở-đây'
+
+    volumes:
+      - dnsguard-data:/var/lib/dnsguard
+
+    # Tiến trình không cần quyền nào ngoài mở hai cổng đã khai báo.
+    security_opt:
+      - no-new-privileges:true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
+
+volumes:
+  dnsguard-data:

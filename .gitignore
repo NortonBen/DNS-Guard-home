@@ -1,0 +1,15 @@
+bin/
+data/
+.air-tmp/
+.env
+
+# Giao diện đã biên dịch: sinh ra từ web/, không commit.
+internal/web/assets/*
+!internal/web/assets/.gitkeep
+
+node_modules/
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
+.playwright-mcp
