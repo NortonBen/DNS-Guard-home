@@ -1,5 +1,5 @@
 import { Link } from '@tanstack/react-router';
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, useState } from 'react';
 
 import { useHealth, useOverview, useSession, useTop, useUnblockRequests, useResolveUnblockRequest } from '@/api/hooks';
 import { Button, Card, EmptyState, Skeleton, StatusBadge, cx } from '@/components/ui/primitives';
@@ -19,8 +19,14 @@ export function DashboardScreen() {
   const health = useHealth();
   const isAdmin = session.data?.user.role === 'admin';
 
-  const topBlocked = useTop('blocked', 24);
-  const topClients = useTop('client', 24);
+  // Khoảng xem của ba bảng xếp hạng. Các thẻ số và biểu đồ theo giờ giữ nguyên 24 giờ:
+  // chúng ghi rõ "24 giờ" trên nhãn, và một biểu đồ theo giờ trải cả năm thì không
+  // đọc được.
+  const [topHours, setTopHours] = useState(24);
+
+  const topQueried = useTop('domain', topHours);
+  const topBlocked = useTop('blocked', topHours);
+  const topClients = useTop('client', topHours);
   const unblockRequests = useUnblockRequests(isAdmin);
 
   const data = overview.data;
@@ -61,7 +67,23 @@ export function DashboardScreen() {
         )}
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-semibold">Bảng xếp hạng</h2>
+        <RangePicker value={topHours} onChange={setTopHours} />
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+        {/* Truy cập nhiều nhất đứng trước bị chặn nhiều nhất: nó trả lời câu hỏi
+            "mạng này thật sự đang dùng gì", còn bảng bị chặn chỉ nói về phần đã
+            quyết định rồi. */}
+        <Card title="Domain truy cập nhiều nhất">
+          <TopTable
+            rows={topQueried.data?.items ?? []}
+            loading={topQueried.isPending}
+            linkToDomain
+          />
+        </Card>
+
         <Card title="Domain bị chặn nhiều nhất">
           <TopTable
             rows={topBlocked.data?.items ?? []}
@@ -206,6 +228,37 @@ interface TopRow {
   domain_id?: number;
 }
 
+const topRanges = [
+  { hours: 24, label: '24 giờ' },
+  { hours: 24 * 7, label: '7 ngày' },
+  { hours: 24 * 30, label: '30 ngày' },
+  { hours: 0, label: 'Toàn bộ' },
+];
+
+/**
+ * Chọn khoảng thời gian cho các bảng xếp hạng.
+ *
+ * Nút bấm chứ không phải danh sách xổ: chỉ có bốn lựa chọn, và ở đây người dùng
+ * thường bấm qua lại giữa chúng để so sánh chứ không chọn một lần rồi thôi.
+ */
+function RangePicker({ value, onChange }: { value: number; onChange: (hours: number) => void }) {
+  return (
+    <div className="flex gap-1" role="group" aria-label="Khoảng thời gian xếp hạng">
+      {topRanges.map((r) => (
+        <Button
+          key={r.hours}
+          variant={value === r.hours ? 'primary' : 'secondary'}
+          aria-pressed={value === r.hours}
+          className="px-2 py-1 text-xs"
+          onClick={() => onChange(r.hours)}
+        >
+          {r.label}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
 function TopTable({
   rows,
   loading,
@@ -226,12 +279,18 @@ function TopTable({
   }
   if (rows.length === 0) return <EmptyState>Chưa có dữ liệu</EmptyState>;
 
+  // Cột trạng thái quyết định cho cả bảng chứ không theo từng dòng: bảng xếp hạng
+  // theo lượt truy cập trộn cả domain đã chặn lẫn chưa xét, và bỏ ô ở những dòng
+  // không có trạng thái sẽ làm các cột lệch nhau.
+  const hasStatus = rows.some((r) => Boolean(r.status));
+
   return (
     <table className="w-full text-sm">
       <thead className="sr-only">
         <tr>
           <th scope="col">Tên</th>
           <th scope="col">Số truy vấn</th>
+          {hasStatus && <th scope="col">Trạng thái</th>}
         </tr>
       </thead>
       <tbody>
@@ -259,9 +318,9 @@ function TopTable({
             <td className="w-24 py-1.5 text-right tabular-nums text-slate-600 dark:text-slate-300">
               {formatNumber(row.queries)}
             </td>
-            {row.status && (
+            {hasStatus && (
               <td className="w-24 py-1.5 text-right">
-                <StatusBadge status={row.status as never} />
+                {row.status && <StatusBadge status={row.status as never} />}
               </td>
             )}
           </tr>

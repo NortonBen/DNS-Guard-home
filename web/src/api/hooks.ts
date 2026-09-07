@@ -372,6 +372,13 @@ export function useOverview(hours = 24) {
   });
 }
 
+/**
+ * Bảng xếp hạng theo chiều đã chọn.
+ *
+ * hours bằng 0 nghĩa là toàn bộ dữ liệu còn giữ. Không có mốc "từ đầu" thật sự: bảng
+ * theo giờ giữ 400 ngày và log thô giữ 90 ngày, nên xin xa hơn thế chỉ trả về đúng
+ * ngần ấy. Mốc 2000-01-01 đủ sớm để bao trọn mọi hạn giữ mà vẫn là một ngày hợp lệ.
+ */
 export function useTop(dimension: string, hours = 24) {
   return useQuery({
     queryKey: qk.top(dimension, hours),
@@ -380,7 +387,10 @@ export function useTop(dimension: string, hours = 24) {
         `/stats/top${query({
           dimension,
           limit: 10,
-          from: new Date(Date.now() - hours * 3600_000).toISOString(),
+          from:
+            hours > 0
+              ? new Date(Date.now() - hours * 3600_000).toISOString()
+              : '2000-01-01T00:00:00.000Z',
         })}`,
       ),
     staleTime: 30_000,
