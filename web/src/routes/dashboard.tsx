@@ -237,17 +237,20 @@ function TopTable({
       <tbody>
         {rows.map((row) => (
           <tr key={row.key} className="border-b border-slate-100 last:border-0 dark:border-slate-800">
-            <td className="py-1.5 pr-2">
+            <td className="min-w-0 max-w-0 py-1.5 pr-2">
               {linkToDomain && row.domain_id ? (
                 <Link
                   to="/domains/$domainId"
                   params={{ domainId: String(row.domain_id) }}
-                  className="domain-name text-sky-700 hover:underline dark:text-sky-400"
+                  className="domain-name block truncate text-sky-700 hover:underline dark:text-sky-400"
+                  title={row.key}
                 >
                   {row.key}
                 </Link>
               ) : (
-                <span className="domain-name">{row.key}</span>
+                <span className="domain-name block truncate" title={row.key}>
+                  {row.key}
+                </span>
               )}
               {row.label && (
                 <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">{row.label}</span>

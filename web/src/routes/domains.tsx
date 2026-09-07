@@ -4,8 +4,16 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 
 import { useCategories, useDomains } from '@/api/hooks';
 import { Field, FilterBar, Select, TextInput } from '@/components/ui/form';
-import { Card, EmptyState, ErrorState, Spinner, StatusBadge, cx } from '@/components/ui/primitives';
-import { formatNumber, formatRelative, formatScore } from '@/lib/format';
+import {
+  Card,
+  EmptyState,
+  ErrorState,
+  Spinner,
+  StatusBadge,
+  TableScroll,
+  cx,
+} from '@/components/ui/primitives';
+import { formatDateTime, formatNumber, formatRelative, formatScore } from '@/lib/format';
 import { originLabels, statusLabels } from '@/lib/strings';
 
 const statuses = ['new', 'staging', 'blocked', 'allowed', 'ignored'] as const;
@@ -141,8 +149,9 @@ export function DomainsScreen() {
           <EmptyState>Không có domain nào khớp bộ lọc</EmptyState>
         ) : (
           <div>
-            <div className="grid grid-cols-[1fr_7rem_8rem_5rem_7rem_5rem_8rem] gap-2 border-b border-slate-200 pb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:text-slate-400">
-              <span>Tên miền</span>
+          <TableScroll minWidth="52rem">
+            <div className="grid grid-cols-[minmax(0,1fr)_7rem_8rem_5rem_7rem_5rem_8rem] gap-2 border-b border-slate-200 pb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:text-slate-400">
+              <span className="min-w-0">Tên miền</span>
               <span>Trạng thái</span>
               <span>Phân loại</span>
               <span className="text-right">Điểm</span>
@@ -151,7 +160,7 @@ export function DomainsScreen() {
               <span>Thấy lần cuối</span>
             </div>
 
-            <div ref={parentRef} className="max-h-[65vh] overflow-auto">
+            <div ref={parentRef} className="max-h-[65vh] overflow-y-auto">
               <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
                 {virtualRows.map((virtualRow) => {
                   const domain = rows[virtualRow.index];
@@ -171,7 +180,7 @@ export function DomainsScreen() {
                         transform: `translateY(${virtualRow.start}px)`,
                       }}
                       className={cx(
-                        'grid grid-cols-[1fr_7rem_8rem_5rem_7rem_5rem_8rem] items-center gap-2',
+                        'grid grid-cols-[minmax(0,1fr)_7rem_8rem_5rem_7rem_5rem_8rem] items-center gap-2',
                         'border-b border-slate-100 text-sm transition-colors dark:border-slate-800',
                         'hover:bg-slate-50 dark:hover:bg-slate-800',
                       )}
@@ -204,7 +213,9 @@ export function DomainsScreen() {
                       </span>
                       <span
                         className="truncate text-xs text-slate-500 dark:text-slate-400"
-                        title={originLabels[domain.origin]}
+                        title={`Thấy lần cuối ${formatDateTime(domain.last_seen)} · Nguồn: ${
+                          originLabels[domain.origin] ?? '—'
+                        }`}
                       >
                         {formatRelative(domain.last_seen)}
                       </span>
@@ -213,6 +224,8 @@ export function DomainsScreen() {
                 })}
               </div>
             </div>
+
+          </TableScroll>
 
             {query.isFetchingNextPage && (
               <p className="pt-2 text-center text-xs text-slate-500 dark:text-slate-400">

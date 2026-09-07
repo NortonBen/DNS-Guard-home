@@ -184,11 +184,17 @@ export function ManualScreen() {
         ) : (
           <div className="max-h-[70vh] overflow-auto">
             <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-white dark:bg-slate-900">
-                <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:text-slate-400">
-                  <th scope="col" className="w-8 py-1.5"></th>
-                  <th scope="col" className="py-1.5">Tên miền</th>
-                  <th scope="col" className="py-1.5">Kết quả</th>
+              {/* Viền dưới đặt trên <th> chứ không trên <tr>: với border-collapse, viền
+                  của hàng bị thu gọn và biến mất khi thead dính ở đầu khung cuộn. */}
+              <thead className="sticky top-0 z-10 bg-white dark:bg-slate-900">
+                <tr className="text-left text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                  <th scope="col" className="w-8 border-b border-slate-200 py-1.5 dark:border-slate-800"></th>
+                  <th scope="col" className="border-b border-slate-200 py-1.5 dark:border-slate-800">
+                    Tên miền
+                  </th>
+                  <th scope="col" className="border-b border-slate-200 py-1.5 dark:border-slate-800">
+                    Kết quả
+                  </th>
                 </tr>
               </thead>
               <tbody>

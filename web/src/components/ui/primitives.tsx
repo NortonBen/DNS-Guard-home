@@ -73,7 +73,7 @@ export function Card({ title, actions, children, className }: CardProps) {
       )}
     >
       {(title || actions) && (
-        <header className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-2.5 dark:border-slate-800">
+        <header className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-slate-200 px-4 py-2.5 dark:border-slate-800">
           <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">{title}</h2>
           {actions}
         </header>
@@ -120,5 +120,28 @@ export function ErrorState({ error }: { error: unknown }) {
     >
       {message}
     </p>
+  );
+}
+
+/**
+ * Khung cuộn ngang cho bảng.
+ *
+ * Mọi bảng trong ứng dụng đều có cột chiều rộng cố định cộng lại vượt quá màn hình
+ * hẹp. Không có khung này, nội dung bị thẻ cha cắt cụt mà không có thanh cuộn — cột
+ * bên phải trở thành không thể đọc được thay vì chỉ cần cuộn tới.
+ *
+ * `minWidth` là bề rộng tối thiểu để các cột không bị bóp méo; dưới mức đó thì cuộn.
+ */
+export function TableScroll({
+  minWidth = '48rem',
+  children,
+}: {
+  minWidth?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="-mx-4 overflow-x-auto px-4">
+      <div style={{ minWidth }}>{children}</div>
+    </div>
   );
 }

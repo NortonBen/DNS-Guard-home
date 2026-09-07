@@ -7,7 +7,14 @@ import {
   useSnapshotDiff,
   useSnapshots,
 } from '@/api/hooks';
-import { Button, Card, EmptyState, ErrorState, Spinner } from '@/components/ui/primitives';
+import {
+  Button,
+  Card,
+  EmptyState,
+  ErrorState,
+  Spinner,
+  TableScroll,
+} from '@/components/ui/primitives';
 import { formatDateTime, formatNumber, shortChecksum } from '@/lib/format';
 
 /** Lịch sử xuất bản: so sánh, quay lại bản cũ, và URL để dán vào router. */
@@ -107,9 +114,12 @@ export function PublishScreen() {
 
         {snapshots.isPending ? (
           <Spinner />
+        ) : snapshots.isError ? (
+          <ErrorState error={snapshots.error} />
         ) : snapshots.data?.items.length === 0 ? (
           <EmptyState>Chưa có lần xuất bản nào</EmptyState>
         ) : (
+          <TableScroll minWidth="46rem">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:text-slate-400">
@@ -140,7 +150,7 @@ export function PublishScreen() {
                     </td>
                     <td className="py-1.5">{formatDateTime(snapshot.published_at)}</td>
                     <td className="py-1.5">{snapshot.category || 'gộp'}</td>
-                    <td className="py-1.5 text-right tabular-nums">
+                    <td className="py-1.5 pl-3 pr-3 text-right tabular-nums">
                       {formatNumber(snapshot.entry_count)}
                       {previous && delta !== 0 && (
                         <span
@@ -182,6 +192,7 @@ export function PublishScreen() {
               })}
             </tbody>
           </table>
+          </TableScroll>
         )}
       </Card>
 

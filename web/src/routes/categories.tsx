@@ -8,7 +8,7 @@ import {
   useWeights,
 } from '@/api/hooks';
 import type { WeightImpact } from '@/api/types';
-import { Button, Card, ErrorState, Spinner, cx } from '@/components/ui/primitives';
+import { Button, Card, ErrorState, Spinner, TableScroll, cx } from '@/components/ui/primitives';
 import { formatNumber, formatWeight } from '@/lib/format';
 
 /**
@@ -25,24 +25,33 @@ export function CategoriesScreen() {
   const preview = usePreviewWeights();
   const apply = useApplyWeights();
 
-  const [draft, setDraft] = useState<Record<string, number>>({});
+  // Giữ nguyên chuỗi người dùng đang gõ: ép sang số ngay sẽ biến ô rỗng thành 0 và
+  // chặn luôn việc gõ dấu trừ hay số thập phân dở dang.
+  const [draft, setDraft] = useState<Record<string, string>>({});
   const [impact, setImpact] = useState<WeightImpact | null>(null);
 
   const dirty = Object.keys(draft).length > 0;
 
-  function setWeight(kind: string, value: number) {
+  function setWeight(kind: string, value: string) {
     setDraft((prev) => ({ ...prev, [kind]: value }));
     // Mọi thay đổi làm kết quả xem trước cũ hết giá trị: buộc xem lại trước khi lưu.
     setImpact(null);
   }
 
+  /** Chỉ gửi đi những ô đã gõ thành số hợp lệ. */
+  function changedWeights() {
+    return Object.entries(draft)
+      .map(([kind, raw]) => ({ kind, weight: Number(raw) }))
+      .filter((c) => Number.isFinite(c.weight));
+  }
+
   function runPreview() {
-    const changes = Object.entries(draft).map(([kind, weight]) => ({ kind, weight }));
+    const changes = changedWeights();
     preview.mutate(changes, { onSuccess: (result) => setImpact(result.impact) });
   }
 
   function applyChanges() {
-    const changes = Object.entries(draft).map(([kind, weight]) => ({ kind, weight }));
+    const changes = changedWeights();
     apply.mutate(changes, {
       onSuccess: () => {
         setDraft({});
@@ -57,6 +66,7 @@ export function CategoriesScreen() {
         {categories.isPending ? (
           <Spinner />
         ) : (
+          <TableScroll minWidth="44rem">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:text-slate-400">
@@ -117,6 +127,7 @@ export function CategoriesScreen() {
               ))}
             </tbody>
           </table>
+          </TableScroll>
         )}
         <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
           Tắt xuất bản không xóa nhãn phân loại — domain vẫn được gán nhãn nhưng không nằm trong
@@ -160,7 +171,7 @@ export function CategoriesScreen() {
           <>
             <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2">
               {weights.data?.weights.map((entry) => {
-                const value = draft[entry.kind] ?? entry.weight;
+                const value = draft[entry.kind] ?? String(entry.weight);
                 const changed = draft[entry.kind] !== undefined;
 
                 return (
@@ -182,7 +193,7 @@ export function CategoriesScreen() {
                       type="number"
                       step="0.5"
                       value={value}
-                      onChange={(e) => setWeight(entry.kind, Number(e.target.value))}
+                      onChange={(e) => setWeight(entry.kind, e.target.value)}
                       className={cx(
                         'w-20 rounded-md px-2 py-1 text-right text-sm tabular-nums ring-1',
                         changed
@@ -190,11 +201,12 @@ export function CategoriesScreen() {
                           : 'ring-slate-300 dark:bg-slate-800 dark:ring-slate-700',
                       )}
                     />
-                    {value !== entry.default && (
+                    {Number(value) !== entry.default && (
                       <button
                         type="button"
-                        onClick={() => setWeight(entry.kind, entry.default)}
+                        onClick={() => setWeight(entry.kind, String(entry.default))}
                         title={`Trả về mặc định ${formatWeight(entry.default)}`}
+                        aria-label={`Trả trọng số ${entry.label_vi} về mặc định ${formatWeight(entry.default)}`}
                         className="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
                       >
                         ↺
@@ -208,6 +220,12 @@ export function CategoriesScreen() {
             {preview.isError && (
               <div className="mt-4">
                 <ErrorState error={preview.error} />
+              </div>
+            )}
+
+            {apply.isError && (
+              <div className="mt-4">
+                <ErrorState error={apply.error} />
               </div>
             )}
 

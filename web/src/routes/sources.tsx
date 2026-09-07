@@ -9,7 +9,15 @@ import {
   useSyncSource,
   useUpdateSource,
 } from '@/api/hooks';
-import { Button, Card, EmptyState, ErrorState, Spinner, cx } from '@/components/ui/primitives';
+import {
+  Button,
+  Card,
+  EmptyState,
+  ErrorState,
+  Spinner,
+  TableScroll,
+  cx,
+} from '@/components/ui/primitives';
 import { formatNumber, formatRelative } from '@/lib/format';
 import { sourceStatusLabels } from '@/lib/strings';
 
@@ -21,15 +29,15 @@ export function SourcesScreen() {
     <div className="space-y-3">
       <div className="flex gap-1">
         <Button
-          variant="ghost"
-          className={cx(tab === 'list' && 'bg-sky-50 text-sky-700 dark:bg-sky-950 dark:text-sky-300')}
+          variant={tab === 'list' ? 'primary' : 'ghost'}
+          aria-pressed={tab === 'list'}
           onClick={() => setTab('list')}
         >
           Danh sách nguồn
         </Button>
         <Button
-          variant="ghost"
-          className={cx(tab === 'overlap' && 'bg-sky-50 text-sky-700 dark:bg-sky-950 dark:text-sky-300')}
+          variant={tab === 'overlap' ? 'primary' : 'ghost'}
+          aria-pressed={tab === 'overlap'}
           onClick={() => setTab('overlap')}
         >
           Chồng lấn
@@ -158,6 +166,7 @@ function SourceList() {
         ) : sources.data?.items.length === 0 ? (
           <EmptyState>Chưa đăng ký nguồn nào</EmptyState>
         ) : (
+          <TableScroll minWidth="56rem">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:text-slate-400">
@@ -242,8 +251,8 @@ function SourceList() {
                           {source.enabled ? 'Tắt' : 'Bật'}
                         </Button>
                         <Button
-                          variant="ghost"
-                          className="px-2 py-1 text-xs text-red-600 dark:text-red-400"
+                          variant="danger"
+                          className="px-2 py-1 text-xs"
                           onClick={() => {
                             if (window.confirm(`Xóa nguồn "${source.name}"?`)) {
                               remove.mutate(source.id);
@@ -259,6 +268,7 @@ function SourceList() {
               })}
             </tbody>
           </table>
+          </TableScroll>
         )}
 
         <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
