@@ -1,6 +1,6 @@
 [Unit]
 Description=DNSGuard — phân tích domain và sinh blocklist DNS
-Documentation=https://github.com/benji/dnsguard
+Documentation=https://github.com/NortonBen/DNS-Guard-home
 After=network-online.target
 Wants=network-online.target
 

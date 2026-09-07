@@ -6,10 +6,11 @@
 
 services:
   dnsguard:
-    build:
-      context: ..
-      dockerfile: deploy/Dockerfile
-    image: dnsguard:latest
+    # Dùng ảnh đã phát hành. Bỏ chú thích hai dòng build để dựng từ mã nguồn tại chỗ.
+    # build:
+    #   context: ..
+    #   dockerfile: deploy/Dockerfile
+    image: ghcr.io/nortonben/dns-guard-home:latest
     container_name: dnsguard
     restart: unless-stopped
 

@@ -59,7 +59,7 @@ trình phụ trợ, không có ngôn ngữ thứ hai, không có dịch vụ ngo
 **Linux** — một lệnh, tự tải binary, tạo dịch vụ systemd:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/benji/dnsguard/main/scripts/install.sh | sudo sh
+curl -fsSL https://raw.githubusercontent.com/NortonBen/DNS-Guard-home/main/scripts/install.sh | sudo sh
 ```
 
 **Docker** — không cần cài gì lên máy chủ:
@@ -68,7 +68,7 @@ curl -fsSL https://raw.githubusercontent.com/benji/dnsguard/main/scripts/install
 docker run -d --name dnsguard --restart unless-stopped \
   -p 8080:8080 -p 37008:37008/udp \
   -v dnsguard-data:/var/lib/dnsguard \
-  ghcr.io/benji/dnsguard:latest
+  ghcr.io/nortonben/dns-guard-home:latest
 ```
 
 **Docker Compose** — nếu muốn sửa cấu hình trong file:

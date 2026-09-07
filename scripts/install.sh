@@ -1,7 +1,7 @@
 #!/bin/sh
 # Cài đặt DNSGuard trên Linux.
 #
-#   curl -fsSL https://raw.githubusercontent.com/benji/dnsguard/main/scripts/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/NortonBen/DNS-Guard-home/main/scripts/install.sh | sh
 #
 # Script tải binary tĩnh khớp kiến trúc máy, tạo người dùng hệ thống, dựng thư mục dữ
 # liệu và cài dịch vụ systemd. Không cài Go, Node hay máy chủ CSDL — binary đã chứa
@@ -12,7 +12,7 @@
 
 set -eu
 
-REPO="${DNSGUARD_REPO:-benji/dnsguard}"
+REPO="${DNSGUARD_REPO:-NortonBen/DNS-Guard-home}"
 VERSION="${DNSGUARD_VERSION:-latest}"
 PREFIX="${DNSGUARD_PREFIX:-/usr/local/bin}"
 DATA_DIR="${DNSGUARD_DATA_DIR:-/var/lib/dnsguard}"
