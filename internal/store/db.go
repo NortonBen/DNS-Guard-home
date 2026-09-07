@@ -57,6 +57,13 @@ func Open(path string, autoMigrate bool) (*Store, error) {
 	return s, nil
 }
 
+// OpenPool mở một pool trên một file SQLite với đúng bộ pragma mà dự án đã chọn.
+//
+// Xuất ra ngoài vì CSDL nhật ký AI là một file riêng nhưng cần y hệt các quyết
+// định vận hành ở đây — WAL, một đầu ghi, synchronous NORMAL. Chép lại bộ pragma
+// ở nơi khác nghĩa là một ngày nào đó hai file sẽ lệch nhau mà không ai nhận ra.
+func OpenPool(path string, writer bool) (*sql.DB, error) { return openPool(path, writer) }
+
 func openPool(path string, writer bool) (*sql.DB, error) {
 	pragmas := []string{
 		"journal_mode(WAL)", // đầu đọc không chặn đầu ghi

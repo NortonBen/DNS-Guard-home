@@ -86,6 +86,25 @@ type Facts struct {
 
 	// VT là kết quả tra VirusTotal. Chỉ tra cho domain đã đáng ngờ.
 	VT VirusTotalResult
+
+	// AI là kết luận của model ngôn ngữ. Chỉ có khi đã cấu hình nhà cung cấp.
+	AI AIVerdict
+}
+
+// AIVerdict là kết luận của model ngôn ngữ về một domain.
+//
+// Thuần dữ liệu như mọi Facts khác: hàm chấm điểm không biết model nào đã tạo ra
+// nó và không gọi ra ngoài để lấy nó. Việc gọi model xảy ra ở tầng làm giàu, đúng
+// khuôn của HTTP và VirusTotal.
+type AIVerdict struct {
+	Checked  bool
+	Category string
+	// Confidence nằm trong [0,1] theo lời model tự khai.
+	Confidence float64
+	Reason     string
+	// Model là tên model đã kết luận. Giữ lại để sáu tháng sau vẫn truy ngược được
+	// một quyết định về đúng phiên bản đã sinh ra nó.
+	Model string
 }
 
 // HTTPAnalysis là những gì đọc được từ một lần tải trang gốc.

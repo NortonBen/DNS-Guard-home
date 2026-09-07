@@ -139,7 +139,8 @@ Kết quả làm giàu, có TTL.
 ```sql
 CREATE TABLE domain_facts (
   domain_id  INTEGER NOT NULL REFERENCES domains(id) ON DELETE CASCADE,
-  source     TEXT NOT NULL CHECK (source IN ('dns','asn','cert','rdap','rank')),
+  source     TEXT NOT NULL
+             CHECK (source IN ('dns','asn','cert','rdap','rank','http','vt','ai')),
   data       TEXT NOT NULL DEFAULT '{}',
   fetched_at TEXT NOT NULL,
   expires_at TEXT NOT NULL,
@@ -159,6 +160,7 @@ TTL theo nguồn:
 | `rank` | 7 ngày | Tranco cập nhật hằng ngày nhưng thứ hạng ổn định |
 | `http` | 14 ngày | Nội dung trang đổi chậm |
 | `vt` | 30 ngày | Kết luận của các engine đổi chậm |
+| `ai` | 21 ngày | Kết luận của model đổi khi model đổi, không khi domain đổi |
 
 TTL còn phụ thuộc **kết cục**, không chỉ nguồn. Đây là phần trả lời yêu cầu "nhớ đã
 kiểm tra chưa, đừng kiểm tra lại ngay, bao lâu thì kiểm tra lại": bảng này lo phần
@@ -175,6 +177,7 @@ khi nó bị truy vấn liên tục — còn bảng dưới lo phần nhịp th�
 | `http` | địa chỉ nội bộ, bị từ chối | 90 ngày | Quyết định an toàn, không đổi theo thời gian |
 | `vt` | VirusTotal chưa biết domain | 7 ngày | Có thể được lập chỉ mục sau |
 | `vt` | hết quota | 1 giờ | Thử lại trong ngày |
+| `ai` | hết hạn mức | 1 giờ | Hạn mức đặt lại theo ngày |
 
 **Ghi cả khi thất bại là có chủ ý.** Dòng lỗi chính là thứ ngăn hệ thống thử lại ngay
 vòng sau; không có nó, một domain không kết nối được sẽ bị hỏi lại mỗi mười lăm phút
@@ -313,6 +316,43 @@ byte; gộp nhiều giờ bằng phép OR; và số đếm là **chính xác tuy
 mà quy mô ở đây thì không tới.
 
 Giữ 400 ngày — nhỏ hơn log thô hàng trăm lần nên không cần xóa sớm.
+
+### `domain_ips`
+
+Ánh xạ domain → địa chỉ, lấy từ **bản ghi trả lời DNS** mà router mirror sang.
+
+```sql
+CREATE TABLE domain_ips (
+  domain_id  INTEGER NOT NULL REFERENCES domains(id) ON DELETE CASCADE,
+  ip         TEXT    NOT NULL,
+  first_seen TEXT    NOT NULL,
+  last_seen  TEXT    NOT NULL,
+  hits       INTEGER NOT NULL DEFAULT 1,
+  ttl        INTEGER NOT NULL DEFAULT 0,
+  asn        INTEGER,
+  country    TEXT,
+  org        TEXT,
+  PRIMARY KEY (domain_id, ip)
+) WITHOUT ROWID;
+```
+
+**Khác `domain_facts` nguồn `asn` ở chỗ nào.** Ở đó là kết quả DNSGuard tự phân giải
+lúc làm giàu — một tra cứu khác, từ một máy khác, vào một lúc khác. Bảng này là câu
+trả lời mà thiết bị trong mạng **thật sự nhận được**, nên nó là thứ duy nhất trong hai
+cái dùng làm bằng chứng điều tra được.
+
+**Không có cột client, và đó là chủ ý.** Gói trả lời đi hai chiều: chiều
+router → client có IP đích là client thật, còn chiều upstream → router có IP đích là
+chính router. Lấy IP đích làm client sẽ gán nhầm mọi lượt phân giải upstream cho
+router. Ánh xạ ở đây độc lập với client; việc quy kết lấy bằng cách nối với
+`query_events`, vốn đã ghi đúng thiết bị nào hỏi tên nào lúc nào.
+
+`ttl` giữ giá trị **nhỏ nhất** từng thấy: nó phân biệt một CDN xoay IP mỗi phút với
+một máy chủ cố định, và một TTL thấp bất thường trên domain lạ là dấu hiệu fast-flux.
+
+`country` bằng `NULL` nghĩa là *chưa tra*; bằng chuỗi rỗng nghĩa là *đã tra mà bảng
+ip2asn không biết*. Phân biệt hai trạng thái này là bắt buộc, nếu không một dải địa
+chỉ ngoài bảng sẽ nằm lại hàng đợi và bị tra lại mãi mãi.
 
 ### `domain_behavior`
 
@@ -498,10 +538,35 @@ tám kết nối. Dồn mọi lệnh ghi qua một kết nối biến `SQLITE_BU
 hàng đợi trong tiến trình — cần thiết vì ingest ghi liên tục trong khi API vẫn phải
 đọc.
 
+### CSDL nhật ký AI — một file riêng
+
+Toàn bộ dấu vết của tính năng hỏi AI nằm ở **một file SQLite thứ hai**, mặc định cạnh
+CSDL chính với hậu tố `-ai` (`DNSGUARD_AI_DB_PATH` để đổi). Cùng bộ pragma, cùng cách
+migration, nhưng không một khoá ngoại nào bắc qua hai file — domain được tham chiếu
+bằng **tên**, không bằng id.
+
+| Bảng | Nội dung |
+|---|---|
+| `ai_requests` | Một lượt gọi model: prompt, phản hồi thô, số đo, lỗi |
+| `ai_verdicts` | Kết luận cho từng domain trong một lượt |
+| `ai_skills` | Quy ước vận hành chèn vào ngữ cảnh theo từ khoá |
+| `ai_mcp_servers` | Máy chủ MCP ngoài cung cấp thêm công cụ |
+| `ai_chats`, `ai_messages` | Hội thoại hỏi đáp, kèm dấu vết gọi công cụ |
+
+Tách file là quyết định vận hành: nhật ký AI phình theo số lượt hỏi chứ không theo số
+domain, người vận hành cần xoá được nó mà không chạm vào dữ liệu quyết định, và một
+bản sao lưu CSDL chính không nên phải mang theo hàng megabyte prompt. **Xoá cả file
+này không mất một quyết định chặn nào.**
+
+Chỉ đúng một thứ của AI đi vào CSDL chính: dòng `domain_facts(source='ai')`, vì nó là
+bằng chứng dùng để chấm điểm. Khóa API nằm ở bảng `settings` của CSDL chính, cùng chỗ
+với khóa VirusTotal — nhật ký AI giữ dữ liệu vận hành, không giữ khóa.
+
 ## 9. Migration
 
 Migration là các file `.sql` trong `internal/store/migrations/`, **nhúng vào binary**
-bằng `go:embed` và chạy tự động khi khởi động.
+bằng `go:embed` và chạy tự động khi khởi động. CSDL nhật ký AI có bộ migration riêng ở
+`internal/ai/migrations/`, chạy bằng cùng một bộ máy (`store.MigrateFS`).
 
 Quy tắc:
 

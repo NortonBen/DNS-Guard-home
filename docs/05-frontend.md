@@ -375,6 +375,30 @@ chính máy truy vấn), hoặc một địa chỉ tự nhập. Khác biệt kh�
 `127.0.0.1` khiến máy khách tự gọi về chính nó và ngồi chờ hết thời gian nếu không có
 gì lắng nghe, thấy rõ nhất trên điện thoại nơi ứng dụng treo thay vì báo lỗi ngay.
 
+### 4.12 Hỏi AI `/ai`
+
+Năm thẻ trên một màn: **Hỏi AI**, **Lịch sử**, **Nhà cung cấp**, **Skill**,
+**Công cụ & MCP**. Ba thẻ cuối chỉ hiện với quản trị viên.
+
+Gom vào một màn thay vì năm mục trên thanh điều hướng: đây là tính năng tuỳ chọn, và
+làm menu dài gấp rưỡi cho thứ có thể chưa bật là cái giá sai.
+
+Mỗi câu trả lời kèm phần **dấu vết gọi công cụ** gập lại được. Gập vì phần lớn lượt
+đọc không cần tới; mở được vì khi câu trả lời có vẻ sai thì đây là chỗ duy nhất cho
+biết model đã đọc gì. Không có phần này, một câu trả lời nghe hợp lý về domain không
+tồn tại trong mạng sẽ không bị phát hiện.
+
+Thẻ Lịch sử tải hai bước: bảng chỉ hiện số đo, bấm vào một dòng mới tải prompt và
+phản hồi thô. Prompt của một lô bốn mươi domain nặng vài kilobyte, và tải hai mươi
+lăm cái cùng lúc chỉ để hiện một bảng là lãng phí thuần túy.
+
+Ô nhập khóa API là loại password và không bao giờ được điền sẵn — máy chủ chỉ trả về
+`configured: true/false`, nên không có gì để điền.
+
+Màn chi tiết domain có thêm thẻ **Kết luận của AI** kèm nút *Hỏi lại AI*. Thẻ tự ẩn
+khi chưa cấu hình khóa: một thẻ rỗng ở màn hình quan trọng nhất chỉ làm loãng thứ
+người dùng đang cần đọc.
+
 ## 5. Nhận diện
 
 <p align="center">

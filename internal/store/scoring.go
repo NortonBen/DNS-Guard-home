@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/benji/dnsguard/internal/classify"
@@ -48,6 +49,63 @@ func (s *Store) ScoringCandidates(ctx context.Context, limit int) ([]ScoringCand
 		LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list scoring candidates: %w", err)
+	}
+	defer rows.Close()
+
+	var out []ScoringCandidate
+	for rows.Next() {
+		var c ScoringCandidate
+		if err := rows.Scan(&c.ID, &c.Domain.Name, &c.Domain.ETLD1, &c.Status,
+			&c.Domain.QueryCount, &c.Domain.ClientCount, &c.Domain.SubdomainCount,
+			&c.Facts.InPublicList, &c.Facts.ETLD1InPublicList); err != nil {
+			return nil, fmt.Errorf("scan scoring candidate: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	for i := range out {
+		if err := s.loadFactsInto(ctx, out[i].ID, &out[i].Facts); err != nil {
+			return nil, err
+		}
+		if err := s.loadBehaviorInto(ctx, out[i].ID, &out[i].Domain); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// ScoringCandidatesByName gom dữ liệu chấm điểm cho một tập domain gọi đích danh.
+//
+// Khác ScoringCandidates ở hai chỗ, và cả hai đều cố ý: nhận tên thay vì id, và
+// KHÔNG lọc theo trạng thái. Người vận hành hỏi lại về một domain đã chặn cũng
+// phải nhận được dữ kiện của nó — lọc ở đây sẽ biến nút "hỏi lại" thành nút im
+// lặng không làm gì với đúng những domain người ta quan tâm nhất.
+func (s *Store) ScoringCandidatesByName(ctx context.Context, names []string) ([]ScoringCandidate, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+	if len(names) > 500 {
+		names = names[:500]
+	}
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(names)), ",")
+	args := make([]any, 0, len(names))
+	for _, n := range names {
+		args = append(args, strings.ToLower(strings.TrimSpace(n)))
+	}
+
+	rows, err := s.r.QueryContext(ctx, `
+		SELECT d.id, d.name, d.etld1, d.status, d.query_count, d.client_count,
+		       (SELECT count(*) FROM domains sub WHERE sub.etld1 = d.etld1) AS subdomains,
+		       EXISTS (SELECT 1 FROM list_entries le WHERE le.domain = d.name)  AS in_list,
+		       EXISTS (SELECT 1 FROM list_entries le WHERE le.domain = d.etld1) AS etld1_in_list
+		FROM domains d
+		WHERE d.name IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list scoring candidates by name: %w", err)
 	}
 	defer rows.Close()
 
@@ -174,6 +232,21 @@ func mergeFact(source, data string, f *classify.Facts) error {
 			RedirectTo: v.RedirectTo, P3P: v.P3P, CORS: v.CORS,
 			TrackingCookie: v.TrackingCookie, CookieMaxDays: v.CookieMaxDays,
 			Title: v.Title, TextLen: v.TextLen, Parking: v.Parking,
+		}
+
+	case "ai":
+		var v struct {
+			Category   string  `json:"category"`
+			Confidence float64 `json:"confidence"`
+			Reason     string  `json:"reason"`
+			Model      string  `json:"model"`
+		}
+		if err := json.Unmarshal([]byte(data), &v); err != nil {
+			return fmt.Errorf("decode ai fact: %w", err)
+		}
+		f.AI = classify.AIVerdict{
+			Checked: true, Category: v.Category, Confidence: v.Confidence,
+			Reason: v.Reason, Model: v.Model,
 		}
 
 	case "vt":

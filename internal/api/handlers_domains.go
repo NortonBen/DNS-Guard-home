@@ -81,6 +81,14 @@ func (s *Server) handleGetDomain(w http.ResponseWriter, r *http.Request) {
 		fail(w, s.log, err)
 		return
 	}
+	// Địa chỉ quan sát được trên dây, khác với ASN trong facts: chỗ kia là kết quả
+	// DNSGuard tự phân giải lúc làm giàu, chỗ này là câu trả lời mà thiết bị trong
+	// mạng thật sự nhận được.
+	ips, err := s.store.DomainIPs(ctx, id, 50)
+	if err != nil {
+		fail(w, s.log, err)
+		return
+	}
 
 	soft, err := s.store.SoftAllowList(ctx)
 	if err != nil {
@@ -97,6 +105,7 @@ func (s *Server) handleGetDomain(w http.ResponseWriter, r *http.Request) {
 		"siblings":     orEmpty(siblings),
 		"history":      orEmpty(history),
 		"public_lists": orEmpty(lists),
+		"ips":          orEmpty(ips),
 		"protected":    protected,
 		"protect_rule": protectRule,
 	})

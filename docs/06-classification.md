@@ -163,7 +163,36 @@ bằng chứng này.
 **Chỉ tra cho domain đã đạt điểm ≥ 3,0** từ các tín hiệu khác. Bậc miễn phí khoảng
 500 lượt mỗi ngày, không đủ để tra mọi domain, và phần lớn domain cũng không cần.
 
-### 2.6 Cấu trúc
+### 2.6 Model ngôn ngữ — hỏi theo lô
+
+| `kind` | Trọng số | Điều kiện |
+|---|---|---|
+| `ai_adtech` | +2,5 | Model xếp vào ads/tracking/telemetry/malware/cryptomining/adult, độ tin cậy ≥ 0,6 |
+| `ai_clean` | −2,0 | Model xếp vào `content`, độ tin cậy ≥ 0,6 |
+
+**+2,5 nằm dưới cả ngưỡng thấp nhất trong hệ** (malware 3,0), nên kết luận của model
+không bao giờ tự nó đủ để chặn. Ràng buộc này chặt hơn nhóm HTTP, và có lý do: tín
+hiệu HTTP nói về một dữ kiện đo được — trang trả pixel, có header P3P — còn tín hiệu
+AI là một phán đoán không kiểm chứng trực tiếp được. Thứ không giải thích được thì
+càng không được phép tự quyết. Test `TestAISignalAloneNeverBlocks` khoá điều này.
+
+**Sàn tin cậy 0,6 tồn tại vì prompt dặn model trả `content` với độ tin cậy thấp khi
+không kết luận được.** Không có sàn, chính lời thú nhận "tôi không biết" lại kéo điểm
+domain xuống −2,0 và che mất tín hiệu thật.
+
+`cdn` cố ý trung tính, không sinh tín hiệu nào: một domain CDN vẫn có thể đang phục vụ
+mã theo dõi, và hạ điểm nó sẽ che mất bằng chứng khác.
+
+`Signal.Detail` mang `model`, `confidence` và `reason`. Không có `model`, một quyết
+định chặn từ sáu tháng trước không truy ngược được về phiên bản đã tạo ra nó — tức là
+mất tính giải thích được theo thời gian, dù tại thời điểm chặn vẫn có vẻ ổn.
+
+**Hỏi theo lô, mỗi domain hỏi một lần.** Bốn mươi domain đi trong một lượt gọi và
+phản hồi là CSV thuần, vì mỗi lượt gọi tốn tiền và mô tả bài toán chỉ nên gửi một
+lần. "Đã hỏi rồi thì thôi" không cần cơ chế riêng: dòng `domain_facts(source='ai')`
+cộng TTL 21 ngày làm đúng việc đó, y hệt `http` và `vt`.
+
+### 2.7 Cấu trúc
 
 | `kind` | Trọng số | Điều kiện |
 |---|---|---|
@@ -384,6 +413,12 @@ Những dấu hiệu cho thấy bộ phân loại đang trôi:
 Dashboard hiển thị bốn chỉ số này.
 
 ## 7. Không dùng học máy ở giai đoạn này
+
+> Mục này nói về **bộ phân loại học máy tự huấn luyện**. Nó không mâu thuẫn với tín
+> hiệu `ai_adtech` ở §2.6: nguồn đó gọi một model ngoài như gọi VirusTotal — một
+> nguồn xác thực thêm, bị chặn trần, không thay thế điểm quy tắc. Xem
+> [plans/260907-2228-ml-phan-loai-domain.md](../plans/260907-2228-ml-phan-loai-domain.md).
+
 
 Lý do đầy đủ ở [02 §5, ADR-6](02-architecture.md).
 Tóm tắt: yêu cầu giải thích được là ràng buộc cứng, và dữ liệu của một mạng đơn lẻ

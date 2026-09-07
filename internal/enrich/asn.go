@@ -146,11 +146,23 @@ func (e *ASNEnricher) Enrich(ctx context.Context, domain string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	facts, _ := e.LookupIP(ip)
+	return facts, nil
+}
+
+// LookupIP tra vị trí mạng của một địa chỉ có sẵn.
+//
+// Khác Enrich ở chỗ không phân giải gì cả: dùng cho địa chỉ đã quan sát được trên
+// dây, nơi câu trả lời thật đã có rồi và phân giải lại chỉ cho ra một kết quả khác.
+//
+// Trả về false khi bảng tra không có dải chứa địa chỉ này. ASNFacts vẫn mang IP để
+// người gọi phân biệt "chưa tra" với "tra rồi mà không biết".
+func (e *ASNEnricher) LookupIP(ip netip.Addr) (ASNFacts, bool) {
 	r, ok := e.Lookup(ip)
 	if !ok {
-		return ASNFacts{IP: ip.String()}, nil
+		return ASNFacts{IP: ip.String()}, false
 	}
-	return ASNFacts{ASN: r.asn, Org: r.org, Country: r.country, IP: ip.String()}, nil
+	return ASNFacts{ASN: r.asn, Org: r.org, Country: r.country, IP: ip.String()}, true
 }
 
 // Lookup tra ASN của một địa chỉ.

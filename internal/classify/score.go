@@ -32,6 +32,7 @@ func ScoreWith(d Domain, f Facts, w Weights, r Rules) Result {
 	signals = append(signals, structureSignals(d, f, w, r)...)
 	signals = append(signals, httpSignals(f, w, r)...)
 	signals = append(signals, virusTotalSignals(f, w, r)...)
+	signals = append(signals, aiSignals(f, w)...)
 	signals = append(signals, negativeSignals(d, f, w, r, infra)...)
 
 	// Không chuẩn hóa điểm về [0,1]. Thang điểm thô dễ suy luận hơn: người vận hành

@@ -15,6 +15,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/benji/dnsguard/internal/ai"
 	"github.com/benji/dnsguard/internal/api"
 	"github.com/benji/dnsguard/internal/auth"
 	"github.com/benji/dnsguard/internal/catalog"
@@ -23,9 +24,12 @@ import (
 	"github.com/benji/dnsguard/internal/events"
 	"github.com/benji/dnsguard/internal/graph"
 	"github.com/benji/dnsguard/internal/ingest"
+	"github.com/benji/dnsguard/internal/llm"
 	"github.com/benji/dnsguard/internal/monitor"
+	"github.com/benji/dnsguard/internal/pcap"
 	"github.com/benji/dnsguard/internal/publish"
 	"github.com/benji/dnsguard/internal/store"
+	"github.com/benji/dnsguard/internal/threat"
 	"github.com/benji/dnsguard/internal/web"
 	"github.com/benji/dnsguard/internal/worker"
 )
@@ -62,23 +66,56 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	aiDB, err := openAIStore(cfg, log)
+	if err != nil {
+		return err
+	}
+	if aiDB != nil {
+		defer aiDB.Close()
+	}
+
 	bus := events.NewBroker(log)
 	publisher := publish.New(db, cfg.ListsDir, cfg.PublishMinRatio, cfg.PublishSink, log)
 	syncer := catalog.New(db, log)
 	builder := graph.New(db, log)
 	enrichers := buildEnrichers(cfg, log)
 
+	llmClient := llm.New(cfg.AIBaseURL, cfg.AIAPIKey, cfg.AIModel, cfg.AIMaxTokens)
+	classifier := registerAI(context.Background(), db, aiDB, cfg, llmClient, enrichers, log)
+
 	// Công tắc phân tích HTTP lưu trong CSDL và sửa được từ giao diện; biến môi trường
 	// chỉ còn là giá trị mặc định cho lần chạy đầu.
 	applyStoredAnalysisSetting(context.Background(), db, cfg, enrichers, log)
 
 	runner := worker.New(db, cfg, enrichers, publisher, syncer, builder, bus, log)
+	if aiDB != nil {
+		runner.SetHistoryPruner(aiDB)
+	}
+	threats := buildThreatSet(cfg, log)
+	runner.SetThreatSet(threats)
 	listener := ingest.NewListener(ingest.Options{Addr: cfg.TZSPListen}, db, log)
+
+	// Bộ ghi pcap là tuỳ chọn và mặc định tắt. Khi bật, nó nhận bản sao mọi khung
+	// bóc được từ TZSP — kể cả khung mà tầng DNS không hiểu, vì một cuộc tấn công
+	// dùng gói dị dạng sẽ biến mất khỏi bằng chứng nếu chỉ ghi thứ ta bóc được.
+	var recorder *pcap.Recorder
+	if cfg.PcapEnabled {
+		recorder = pcap.New(pcap.Options{
+			Dir:           cfg.PcapDir,
+			MaxFileBytes:  int64(cfg.PcapMaxFileMB) << 20,
+			MaxTotalBytes: int64(cfg.PcapMaxTotalMB) << 20,
+		}, log)
+		listener.SetRecorder(recorder)
+		log.Info("ghi pcap phục vụ điều tra",
+			"dir", cfg.PcapDir, "max_file_mb", cfg.PcapMaxFileMB, "max_total_mb", cfg.PcapMaxTotalMB)
+	}
 
 	server := api.New(api.Options{
 		Store: db, Auth: auth.NewService(db, cfg.SessionTTL), Config: cfg,
 		Publisher: publisher, Worker: runner, Bus: bus, Listener: listener,
-		Enrichers: enrichers, WebFS: web.FS(), Version: version, Log: log,
+		Enrichers: enrichers, Threats: threats, Pcap: recorder,
+		WebFS: web.FS(), Version: version, Log: log,
+		AIStore: aiDB, LLM: llmClient, Classifier: classifier,
 	})
 
 	httpServer := &http.Server{
@@ -105,6 +142,14 @@ func run() error {
 			log.Error("bộ nhận TZSP dừng", "err", err)
 		}
 	})
+
+	if recorder != nil {
+		wg.Go(func() {
+			if err := recorder.Run(ctx); err != nil {
+				log.Error("bộ ghi pcap dừng", "err", err)
+			}
+		})
+	}
 
 	wg.Go(func() {
 		runner.Run(ctx)
@@ -133,10 +178,94 @@ func run() error {
 	return nil
 }
 
+// openAIStore mở CSDL nhật ký AI. Trả về nil khi không mở được.
+//
+// Không mở được thì cả cụm AI tắt, nhưng dịch vụ vẫn chạy: phân loại bằng luật,
+// thu thập và xuất danh sách không phụ thuộc vào model nào. Đánh đổi này là cố ý —
+// một tính năng phụ hỏng không được kéo theo chức năng chính.
+func openAIStore(cfg config.Config, log *slog.Logger) (*ai.Store, error) {
+	path := cfg.AIDBPath
+	if path == "" {
+		path = ai.DefaultPath(cfg.DBPath)
+	}
+
+	db, err := ai.OpenStore(path, cfg.AutoMigrate)
+	if err != nil {
+		log.Error("không mở được CSDL nhật ký AI, tắt tính năng AI", "path", path, "err", err)
+		return nil, nil
+	}
+	if err := db.EnsureBuiltinSkills(context.Background()); err != nil {
+		log.Warn("không nạp được skill dựng sẵn", "err", err)
+	}
+	log.Info("đã mở CSDL nhật ký AI", "path", path)
+	return db, nil
+}
+
+// registerAI đăng ký nguồn phân loại bằng model vào registry.
+//
+// Giới hạn tốc độ đặt ở 1 lượt/giây, burst 2: nhà cung cấp nào cũng chịu được mức
+// đó, và mỗi lượt đã gói bốn mươi domain nên đây không phải nút thắt. Thứ chặn
+// thật là cổng lọc ứng viên ở tầng worker.
+func registerAI(ctx context.Context, db *store.Store, aiDB *ai.Store, cfg config.Config,
+	client *llm.Client, enrichers *enrich.Registry, log *slog.Logger) *ai.Classifier {
+
+	if aiDB == nil {
+		return nil
+	}
+
+	// Dữ kiện lấy từ CSDL chính qua một hàm, không phải qua một tay cầm: gói ai giữ
+	// ranh giới "chỉ ghi vào CSDL của mình". Cùng khuôn với cách enrich.NewASN nhận
+	// hàm phân giải DNS.
+	evidence := func(ctx context.Context, domains []string) ([]ai.Evidence, error) {
+		found, err := db.ScoringCandidatesByName(ctx, domains)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]ai.Evidence, 0, len(found))
+		for _, c := range found {
+			out = append(out, ai.EvidenceFrom(c.Domain, c.Facts))
+		}
+		return out, nil
+	}
+
+	classifier := ai.NewClassifier(client, aiDB, evidence, log)
+	classifier.SetBatchSize(cfg.AIBatchSize)
+	enrichers.Register(classifier, 1, 2, false)
+
+	// Đọc cấu hình đã lưu trên giao diện và áp ngay: khóa nhập trên giao diện thắng
+	// biến môi trường, và chính lời gọi này bật nguồn lên khi đủ điều kiện.
+	if err := ai.ApplySettings(ctx, db, ai.Defaults{
+		BaseURL: cfg.AIBaseURL, APIKey: cfg.AIAPIKey, Model: cfg.AIModel,
+		MaxTokens: cfg.AIMaxTokens, BatchSize: cfg.AIBatchSize,
+		ExternalEnabled: cfg.ExternalEnabled,
+	}, client, classifier, enrichers, log); err != nil {
+		log.Warn("không áp được cấu hình AI đã lưu", "err", err)
+	}
+	return classifier
+}
+
 // buildEnrichers dựng registry các nguồn làm giàu.
 //
 // Giới hạn tốc độ đặt riêng từng nguồn vì chúng khác nhau rất xa: phân giải DNS chịu
 // được hàng chục truy vấn mỗi giây, còn crt.sh sẽ chặn nếu vượt vài truy vấn mỗi phút.
+// buildThreatSet nạp danh sách hạ tầng độc hại từ đĩa.
+//
+// Không nằm trong buildEnrichers vì nó không phải nguồn làm giàu: nó tra theo địa chỉ
+// chứ không theo tên miền, và không đóng góp tín hiệu nào vào điểm phân loại.
+func buildThreatSet(cfg config.Config, log *slog.Logger) *threat.Set {
+	set := threat.New()
+	if err := set.LoadTable(cfg.IPThreatPath); err != nil {
+		// Thiếu danh sách chỉ làm mất cảnh báo, không làm hỏng gì khác. Job đối chiếu
+		// tự bỏ qua và nói lý do trong nhật ký.
+		log.Warn("không nạp được danh sách hạ tầng độc hại, cảnh báo IP sẽ không hoạt động",
+			"path", cfg.IPThreatPath, "err", err)
+	} else {
+		log.Info("đã nạp danh sách hạ tầng độc hại",
+			"path", cfg.IPThreatPath, "entries", set.Status().Entries)
+	}
+	return set
+}
+
 func buildEnrichers(cfg config.Config, log *slog.Logger) *enrich.Registry {
 	registry := enrich.NewRegistry(log)
 	resolver := enrich.NewDNS(nil)

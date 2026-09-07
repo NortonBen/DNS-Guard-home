@@ -177,12 +177,27 @@ Chi tiết đầy đủ cho US-2. Đây là endpoint nặng nhất, có ngân s�
       "reason": "score 7.5 ≥ threshold 5.5",
       "created_at": "2026-08-30T03:30:00Z"
     }
+  ],
+  "ips": [
+    {
+      "ip": "185.11.22.33", "first_seen": "2026-09-01T10:02:11Z",
+      "last_seen": "2026-09-07T22:41:03Z", "hits": 812, "ttl": 60,
+      "asn": 62597, "country": "DK", "org": "Adform"
+    }
   ]
 }
 ```
 
 `siblings` là subdomain cùng `etld1` đã thấy trong mạng, giới hạn 50 dòng đầu theo
 lưu lượng.
+
+`ips` là địa chỉ **quan sát được trên dây** từ bản ghi trả lời DNS, giới hạn 50 dòng
+mới nhất. Đừng nhầm với `facts.asn`: chỗ đó là kết quả DNSGuard tự phân giải lúc làm
+giàu, còn đây là câu trả lời thiết bị trong mạng thật sự nhận được. Hai chỗ lệch nhau
+là bình thường với CDN, và chính khoảng lệch đó mới đáng chú ý.
+
+`country` rỗng nghĩa là đã tra mà bảng ip2asn không có dải chứa địa chỉ này; trường
+vắng mặt nghĩa là chưa tra.
 
 ### `GET /domains/:id/graph`
 
@@ -227,6 +242,40 @@ lúc nào cũng cần.
 ```
 
 Chỉ vai trò `admin` thấy `by_client` (NFR bảo mật, US-6).
+
+### `GET /investigate/ip?addr=185.11.22.33`
+
+Điều tra ngược từ một địa chỉ: thao tác mở đầu khi vụ việc bắt đầu bằng một IP trong
+cảnh báo chứ không phải một tên miền.
+
+```json
+{
+  "ip": "185.11.22.33",
+  "domains": [
+    {
+      "domain_id": 4821, "name": "x.eulerian.net", "status": "blocked",
+      "first_seen": "2026-09-01T10:02:11Z", "last_seen": "2026-09-07T22:41:03Z",
+      "hits": 812
+    }
+  ],
+  "accesses": [
+    { "client": "192.168.88.20", "domain": "x.eulerian.net",
+      "occurred_at": "2026-09-07T22:40:58Z" }
+  ]
+}
+```
+
+Địa chỉ đi qua tham số truy vấn chứ không phải đoạn đường dẫn, vì địa chỉ IPv6 chứa
+dấu hai chấm. Giá trị được chuẩn hoá trước khi tra, nên mọi cách viết của cùng một
+địa chỉ IPv6 đều ra cùng kết quả. Địa chỉ không hợp lệ trả **400**.
+
+`accesses` chỉ gồm truy vấn rơi vào khoảng `[first_seen, last_seen]` của ánh xạ —
+ngoài khoảng đó, cùng tên ấy có thể đã trỏ đi nơi khác. Mỗi phần giới hạn 200 dòng.
+
+**Giới hạn phải đọc kỹ.** Kết quả trả lời câu *"thiết bị nào đã phân giải một tên trỏ
+tới địa chỉ này, lúc mấy giờ"*. Nó **không** chứng minh có kết nối thật tới địa chỉ
+đó: luồng mirror chỉ mang DNS (`filter-port=53`), nên phần kết nối nằm ngoài tầm quan
+sát. Client dùng DoH/DoT không xuất hiện ở đây chút nào.
 
 ### `POST /domains/:id/decision`
 
@@ -646,7 +695,8 @@ Không cần xác thực. Dùng cho giám sát.
   "status": "degraded",
   "checks": {
     "database":      { "ok": true,  "latency_ms": 3 },
-    "querylog":      { "ok": true,  "last_event_age_s": 12 },
+    "querylog":      { "ok": true,  "last_event_age_s": 12,
+                       "events_accepted": 128401, "resolutions_accepted": 119872 },
     "jobs":          { "ok": true,  "pending": 4, "failed_24h": 0 },
     "sources":       { "ok": false, "message": "Hagezi Pro: 404 lần cuối" },
     "publish":       { "ok": true,  "last_publish_age_s": 3421 }
@@ -658,6 +708,11 @@ Không cần xác thực. Dùng cho giám sát.
 
 Kiểm tra `querylog.last_event_age_s` là quan trọng nhất: nếu vượt 600 giây nghĩa là
 sniffer trên MikroTik đã dừng — lỗi thường gặp nhất sau khi router reboot.
+
+`querylog.resolutions_accepted` đứng yên ở 0 trong khi `events_accepted` vẫn tăng
+nghĩa là router chỉ mirror truy vấn chứ không mirror bản ghi trả lời. Khi đó bảng
+`domain_ips` rỗng vĩnh viễn và mọi tính năng điều tra theo IP im lặng không có dữ
+liệu — không có lỗi nào khác báo ra. Kiểm tra `filter-port=53` trên sniffer.
 
 ### `GET /jobs/:id`
 
@@ -689,7 +744,12 @@ dàng, và không cần thư viện phía client.
 
 ---
 
-## 9. Một nguồn sự thật giữa Go và TypeScript
+## 9. Hỏi AI
+
+Nhóm endpoint `/ai/*` là **tuỳ chọn** và có tài liệu riêng:
+[09-ai.md](09-ai.md).
+
+## 10. Một nguồn sự thật giữa Go và TypeScript
 
 Kiểu dữ liệu phía TypeScript khai báo tay trong `web/src/api/types.ts`, phản chiếu các
 struct Go ở `internal/store` và `internal/api`.
@@ -709,7 +769,7 @@ Bù lại bằng hai thứ:
 
 Nếu bề mặt API lớn thêm đáng kể, sinh code từ OpenAPI là bước tiếp theo hợp lý.
 
-## 10. Endpoint có thêm so với đặc tả gốc
+## 11. Endpoint có thêm so với đặc tả gốc
 
 | Endpoint | Việc |
 |---|---|

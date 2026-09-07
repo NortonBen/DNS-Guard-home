@@ -428,3 +428,81 @@ func TestHTTPSignalAloneNeverCrossesAdsThreshold(t *testing.T) {
 		t.Errorf("vt_malicious có trọng số %.1f ≥ ngưỡng ads %.1f", w, adsThreshold)
 	}
 }
+
+// Kết luận của model không bao giờ tự nó đủ để chặn, và không bao giờ đủ để vượt
+// cả ngưỡng malware — ngưỡng thấp nhất trong hệ.
+//
+// Ràng buộc này mạnh hơn ràng buộc của nhóm HTTP, và có lý do: tín hiệu HTTP nói
+// về một dữ kiện đo được (trang trả pixel, header P3P), còn tín hiệu AI là một
+// lời phán đoán không kiểm chứng trực tiếp được. Thứ không giải thích được thì
+// càng không được phép tự quyết.
+func TestAISignalAloneNeverBlocks(t *testing.T) {
+	const (
+		adsThreshold     = 5.5
+		malwareThreshold = 3.0
+	)
+
+	if w := DefaultWeights.Get(KindAIAdtech); w >= malwareThreshold {
+		t.Errorf("ai_adtech có trọng số %.1f ≥ ngưỡng malware %.1f — một mình nó đủ để chặn",
+			w, malwareThreshold)
+	}
+	if w := DefaultWeights.Get(KindAIAdtech); w >= adsThreshold {
+		t.Errorf("ai_adtech có trọng số %.1f ≥ ngưỡng ads %.1f", w, adsThreshold)
+	}
+}
+
+// Model nói "tôi không chắc" thì không được tính thành bằng chứng.
+//
+// Prompt dặn model trả content với độ tin cậy thấp khi không kết luận được. Nếu
+// sàn tin cậy không được tôn trọng, chính lời thú nhận đó lại kéo điểm domain
+// xuống và che mất tín hiệu thật.
+func TestAIVerdictBelowConfidenceFloorIsIgnored(t *testing.T) {
+	domain := Domain{Name: "vi-du.com", ETLD1: "vi-du.com"}
+
+	cases := []struct {
+		name       string
+		verdict    AIVerdict
+		wantSignal string
+	}{
+		{
+			name:    "tin cậy thấp thì bỏ qua",
+			verdict: AIVerdict{Checked: true, Category: "ads", Confidence: 0.4},
+		},
+		{
+			name:    "chưa hỏi thì bỏ qua",
+			verdict: AIVerdict{Category: "ads", Confidence: 0.95},
+		},
+		{
+			name:       "đủ tin cậy thì buộc tội",
+			verdict:    AIVerdict{Checked: true, Category: "ads", Confidence: 0.9},
+			wantSignal: KindAIAdtech,
+		},
+		{
+			name:       "nội dung bình thường thì bảo vệ",
+			verdict:    AIVerdict{Checked: true, Category: "content", Confidence: 0.9},
+			wantSignal: KindAIClean,
+		},
+		{
+			// cdn là hạ tầng trung tính: nó vẫn có thể đang phục vụ mã theo dõi,
+			// nên không được hạ điểm và che mất tín hiệu khác.
+			name:    "cdn thì trung tính",
+			verdict: AIVerdict{Checked: true, Category: "cdn", Confidence: 0.95},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Score(domain, Facts{AI: tc.verdict}, DefaultWeights)
+
+			if tc.wantSignal == "" {
+				if got.HasSignal(KindAIAdtech) || got.HasSignal(KindAIClean) {
+					t.Errorf("có tín hiệu AI %v, muốn không có", got.SignalKinds())
+				}
+				return
+			}
+			if !got.HasSignal(tc.wantSignal) {
+				t.Errorf("tín hiệu = %v, muốn có %s", got.SignalKinds(), tc.wantSignal)
+			}
+		})
+	}
+}

@@ -12,9 +12,16 @@ import (
 // nên dựng gói tổng hợp trong test là cách rẻ nhất để bắt lỗi sớm.
 func buildTZSP(t *testing.T, src netip.Addr, dstPort uint16, dns []byte, vlans int) []byte {
 	t.Helper()
+	return buildTZSPPorts(t, src, 40000, dstPort, dns, vlans)
+}
+
+// buildTZSPPorts giống buildTZSP nhưng đặt được cả cổng nguồn, để dựng gói trả lời
+// (cổng nguồn 53) chứ không chỉ gói truy vấn.
+func buildTZSPPorts(t *testing.T, src netip.Addr, srcPort, dstPort uint16, dns []byte, vlans int) []byte {
+	t.Helper()
 
 	udp := make([]byte, 8+len(dns))
-	binary.BigEndian.PutUint16(udp[0:2], 40000) // cổng nguồn
+	binary.BigEndian.PutUint16(udp[0:2], srcPort)
 	binary.BigEndian.PutUint16(udp[2:4], dstPort)
 	binary.BigEndian.PutUint16(udp[4:6], uint16(len(udp)))
 	copy(udp[8:], dns)

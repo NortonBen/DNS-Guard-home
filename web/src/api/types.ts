@@ -401,3 +401,126 @@ export interface ResourceSeries {
   summary: ResourceSummary;
   points: ResourcePoint[];
 }
+
+/* ---- Hỏi AI ---- */
+
+/** Trạng thái nhà cung cấp model. Không bao giờ chứa khóa API. */
+export interface AIStatus {
+  /** false khi máy chủ chạy mà không mở được CSDL nhật ký AI. */
+  available: boolean;
+  enabled?: boolean;
+  configured?: boolean;
+  base_url?: string;
+  model?: string;
+  max_tokens?: number;
+  batch_size?: number;
+  /** Công tắc cứng ở biến môi trường: bật trên giao diện cũng không thắng được nó. */
+  external_enabled?: boolean;
+  db_path?: string;
+  usage_30d?: AIUsage;
+}
+
+export interface AIUsage {
+  requests: number;
+  domains: number;
+  verdicts: number;
+  failed: number;
+  prompt_chars: number;
+  reply_chars: number;
+  last_at?: string;
+}
+
+export type AIRequestKind = 'classify' | 'recheck' | 'ask';
+
+/** Một lượt gọi model đã ghi lại. Danh sách không kèm prompt và phản hồi thô. */
+export interface AIRequest {
+  id: number;
+  kind: AIRequestKind;
+  model: string;
+  base_url: string;
+  domain_count: number;
+  parsed_count: number;
+  skipped_count: number;
+  prompt?: string;
+  response?: string;
+  prompt_chars: number;
+  reply_chars: number;
+  latency_ms: number;
+  error?: string;
+  actor: string;
+  created_at: string;
+}
+
+export interface AIVerdict {
+  id: number;
+  request_id: number;
+  domain: string;
+  category: string;
+  confidence: number;
+  reason: string;
+  created_at: string;
+}
+
+/** Một lần model gọi công cụ, để người dùng thấy câu trả lời dựa trên dữ liệu nào. */
+export interface AIStep {
+  tool: string;
+  args: string;
+  result: string;
+}
+
+export interface AIAnswer {
+  chat_id: number;
+  answer: string;
+  steps: AIStep[];
+  skills: string[];
+  warnings: string[];
+}
+
+export interface AIChat {
+  id: number;
+  title: string;
+  actor: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AIChatMessage {
+  id: number;
+  chat_id: number;
+  role: 'user' | 'assistant';
+  content: string;
+  steps: AIStep[];
+  created_at: string;
+}
+
+export interface AISkill {
+  id: number;
+  name: string;
+  description: string;
+  triggers: string[];
+  content: string;
+  /** Skill "luôn dùng" được chèn vào mọi câu hỏi, không cần khớp từ khóa. */
+  always: boolean;
+  enabled: boolean;
+  /** Skill dựng sẵn tắt được nhưng không xoá được. */
+  builtin: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AIMCPServer {
+  id: number;
+  name: string;
+  url: string;
+  /** Token không bao giờ ra khỏi máy chủ; chỉ biết có hay không. */
+  has_auth: boolean;
+  enabled: boolean;
+  note: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AITool {
+  name: string;
+  description: string;
+}

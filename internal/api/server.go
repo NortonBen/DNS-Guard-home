@@ -11,13 +11,17 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
+	"github.com/benji/dnsguard/internal/ai"
 	"github.com/benji/dnsguard/internal/auth"
 	"github.com/benji/dnsguard/internal/config"
 	"github.com/benji/dnsguard/internal/enrich"
 	"github.com/benji/dnsguard/internal/events"
 	"github.com/benji/dnsguard/internal/ingest"
+	"github.com/benji/dnsguard/internal/llm"
+	"github.com/benji/dnsguard/internal/pcap"
 	"github.com/benji/dnsguard/internal/publish"
 	"github.com/benji/dnsguard/internal/store"
+	"github.com/benji/dnsguard/internal/threat"
 	"github.com/benji/dnsguard/internal/worker"
 )
 
@@ -31,9 +35,17 @@ type Server struct {
 	bus       *events.Broker
 	listener  *ingest.Listener
 	enrichers *enrich.Registry
+	threats   *threat.Set
+	pcap      *pcap.Recorder
 	webFS     fs.FS
 	version   string
 	log       *slog.Logger
+
+	// Cụm AI là tuỳ chọn: cả ba con trỏ này rỗng khi máy chủ chạy không có model
+	// nào, và các endpoint /ai trả 503 thay vì hỏng.
+	aiStore    *ai.Store
+	llm        *llm.Client
+	classifier *ai.Classifier
 
 	logins *loginLimiter
 }
@@ -48,9 +60,15 @@ type Options struct {
 	Bus       *events.Broker
 	Listener  *ingest.Listener
 	Enrichers *enrich.Registry
+	Threats   *threat.Set
+	Pcap      *pcap.Recorder
 	WebFS     fs.FS
 	Version   string
 	Log       *slog.Logger
+
+	AIStore    *ai.Store
+	LLM        *llm.Client
+	Classifier *ai.Classifier
 }
 
 // New dựng Server.
@@ -58,7 +76,9 @@ func New(o Options) *Server {
 	return &Server{
 		store: o.Store, auth: o.Auth, cfg: o.Config, publisher: o.Publisher,
 		worker: o.Worker, bus: o.Bus, listener: o.Listener, enrichers: o.Enrichers,
+		threats: o.Threats, pcap: o.Pcap,
 		webFS: o.WebFS, version: o.Version, log: o.Log,
+		aiStore: o.AIStore, llm: o.LLM, classifier: o.Classifier,
 		logins: newLoginLimiter(5, 15*time.Minute),
 	}
 }
@@ -79,6 +99,10 @@ func (s *Server) Handler() http.Handler {
 	r.Get("/health", s.handleHealth)
 	r.Get("/metrics", s.handleMetrics)
 	r.Get("/lists/{file}", s.handleList)
+	// RouterOS dò HEAD trước khi tải adlist về, và bỏ luôn danh sách khi request
+	// đầu tiên không phải 2xx. Chi trả 405 cho method chưa đăng ký, nên thiếu dòng
+	// này router nạp về đúng 0 tên mà không báo gì ngoài log dns.
+	r.Head("/lists/{file}", s.handleList)
 
 	r.Route("/api/v1", func(r chi.Router) {
 		r.Post("/auth/login", s.handleLogin)
@@ -99,6 +123,8 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/domains/{id}/graph", s.handleDomainGraph)
 			r.Get("/graph", s.handleNetworkGraph)
 			r.Get("/domains/{id}/timeline", s.handleDomainTimeline)
+			r.Get("/investigate/ip", s.handleInvestigateIP)
+			r.Get("/threats", s.handleListThreats)
 			r.Get("/categories", s.handleListCategories)
 			r.Get("/sources", s.handleListSources)
 			r.Get("/sources/overlap", s.handleSourceOverlap)
@@ -111,6 +137,17 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/stats/resources", s.handleStatsResources)
 			r.Get("/jobs/{id}", s.handleGetJob)
 			r.Post("/unblock-requests", s.handleCreateUnblockRequest)
+
+			// Hỏi đáp mở cho cả hai vai trò; bộ công cụ mới là thứ phân quyền.
+			// Vai trò không phải quản trị chỉ nhận được công cụ đọc — xem aiHost.
+			r.Get("/ai/status", s.handleAIStatus)
+			r.Get("/ai/tools", s.handleAITools)
+			r.Post("/ai/ask", s.handleAIAsk)
+			r.Get("/ai/chats", s.handleAIChats)
+			r.Get("/ai/chats/{id}", s.handleAIChat)
+			r.Get("/ai/history", s.handleAIHistory)
+			r.Get("/ai/history/{id}", s.handleAIRequest)
+			r.Get("/ai/verdicts", s.handleAIVerdicts)
 
 			// Chỉ quản trị mới thay đổi được trạng thái.
 			r.Group(func(r chi.Router) {
@@ -138,6 +175,17 @@ func (s *Server) Handler() http.Handler {
 				r.Put("/settings/analysis", s.handleUpdateAnalysis)
 				r.Put("/settings/publish", s.handleUpdatePublish)
 				r.Post("/settings/lookup/{kind}/refresh", s.handleRefreshLookup)
+
+				r.Put("/ai/settings", s.handleUpdateAISettings)
+				r.Post("/ai/classify", s.handleAIClassify)
+				r.Post("/domains/{id}/ai-recheck", s.handleAIRecheck)
+				r.Delete("/ai/chats/{id}", s.handleDeleteAIChat)
+				r.Get("/ai/skills", s.handleListAISkills)
+				r.Put("/ai/skills", s.handleSaveAISkill)
+				r.Delete("/ai/skills/{id}", s.handleDeleteAISkill)
+				r.Get("/ai/mcp-servers", s.handleListMCPServers)
+				r.Put("/ai/mcp-servers", s.handleSaveMCPServer)
+				r.Delete("/ai/mcp-servers/{id}", s.handleDeleteMCPServer)
 			})
 		})
 	})

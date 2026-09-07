@@ -285,6 +285,17 @@ func TestFullFlowFromDecisionToPublishedList(t *testing.T) {
 		t.Errorf("danh sách thiếu domain đã chặn:\n%s", listBody)
 	}
 
+	// HEAD phải trả 200 như GET: RouterOS dò HEAD trước, gặp 405 là bỏ danh sách.
+	headReq, _ := http.NewRequest(http.MethodHead, h.server.URL+"/lists/ads.txt", nil)
+	headResp, err := h.server.Client().Do(headReq)
+	if err != nil {
+		t.Fatalf("HEAD /lists/ads.txt: %v", err)
+	}
+	headResp.Body.Close()
+	if headResp.StatusCode != http.StatusOK {
+		t.Errorf("HEAD /lists/ads.txt = %d, muốn 200", headResp.StatusCode)
+	}
+
 	// ETag và 304: router tải lại mỗi vài giờ, và tải lại nội dung không đổi là lãng phí.
 	etag := resp.Header.Get("ETag")
 	if etag == "" {

@@ -23,6 +23,11 @@ import (
 const (
 	DefaultASNURL    = "https://iptoasn.com/data/ip2asn-combined.tsv.gz"
 	DefaultTrancoURL = "https://tranco-list.eu/top-1m.csv.zip"
+	// Danh sách máy chủ điều khiển botnet của abuse.ch. Chọn nguồn này làm mặc định
+	// vì nó liệt kê hạ tầng *chuyên dụng* của kẻ tấn công, không phải dải dùng chung:
+	// một địa chỉ trong đó hiếm khi còn phục vụ thứ gì hợp pháp, nên tỉ lệ báo nhầm
+	// thấp hơn hẳn các danh sách chặn theo danh tiếng.
+	DefaultIPThreatURL = "https://feodotracker.abuse.ch/downloads/ipblocklist.txt"
 )
 
 // maxTableSize chặn trên kích thước tải về. Bảng ASN khoảng 10 MB nén, Tranco khoảng
@@ -41,12 +46,23 @@ type TableStatus struct {
 	DefaultURL string `json:"default_url"`
 }
 
+// Table là một bảng tra cứu cục bộ tải về được và nạp lại được lúc chạy.
+//
+// Hẹp hơn Reloadable đúng một bậc, và cố ý: RefreshTable chỉ cần chừng này. Tách ra
+// để một bảng tra cứu *không phải* nguồn làm giàu — như danh sách hạ tầng độc hại,
+// vốn tra theo địa chỉ chứ không theo tên miền — vẫn dùng được cơ chế tải về nguyên
+// tử ở đây mà không phải cài một Enrich giả chỉ để thoả mãn kiểu.
+type Table interface {
+	Name() string
+	LoadTable(path string) error
+	Status() TableStatus
+}
+
 // Reloadable là nguồn làm giàu đọc dữ liệu từ một file cục bộ và nạp lại được lúc
 // chạy, không cần khởi động lại tiến trình.
 type Reloadable interface {
 	Enricher
-	LoadTable(path string) error
-	Status() TableStatus
+	Table
 }
 
 // Reloadables trả về các nguồn nạp lại được, theo tên.
@@ -76,7 +92,7 @@ func (r *Registry) Statuses() []TableStatus {
 //
 // Ghi ra file tạm cùng thư mục rồi đổi tên: nếu tải hỏng giữa chừng, bảng đang dùng
 // vẫn còn nguyên. Chỉ khi tải xong và nạp được thì file cũ mới bị thay.
-func RefreshTable(ctx context.Context, target Reloadable, url, dest string) (int64, error) {
+func RefreshTable(ctx context.Context, target Table, url, dest string) (int64, error) {
 	if dest == "" {
 		return 0, fmt.Errorf("chưa cấu hình đường dẫn lưu bảng %q", target.Name())
 	}

@@ -47,10 +47,11 @@ trình phụ trợ, không có ngôn ngữ thứ hai, không có dịch vụ ngo
 |---|---|
 | Backend | Go 1.26+ — một binary tĩnh, không runtime |
 | Frontend | React 19 + TypeScript + Vite, nhúng sẵn trong binary |
-| CSDL | SQLite (WAL), một file |
+| CSDL | SQLite (WAL), một file — cộng một file riêng cho nhật ký AI khi bật |
 | Thu thập | Bộ nhận TZSP tích hợp, cổng UDP 37008 |
 | Hàng đợi job | Chạy trên chính CSDL |
 | Đóng gói | Image Docker multi-arch (amd64, arm64) |
+| Hỏi AI *(tuỳ chọn)* | Mọi endpoint kiểu OpenAI Chat Completions — DeepSeek, OpenAI, Ollama |
 
 ---
 
@@ -154,6 +155,7 @@ Chi tiết ở [docs/07-development.md](docs/07-development.md).
 | 06 | [Bộ phân loại](docs/06-classification.md) | dev backend | Taxonomy, tín hiệu, công thức chấm điểm, vòng đời domain, đánh giá chất lượng |
 | 07 | [Phát triển](docs/07-development.md) | dev | Dựng môi trường, quy ước code, kiểm thử, triển khai |
 | 08 | [Lộ trình](docs/08-roadmap.md) | tất cả | Trạng thái từng mốc và phạm vi còn lại |
+| 09 | [Hỏi AI](docs/09-ai.md) | vận hành, dev | Gom lô hỏi model, nhật ký riêng, hỏi đáp, skill và MCP |
 
 Nếu bạn chỉ đọc một file: **01** để hiểu làm gì, **02** để hiểu làm thế nào.
 

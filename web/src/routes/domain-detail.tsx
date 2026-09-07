@@ -9,6 +9,7 @@ import {
   useDomainGraph,
   useSession,
 } from '@/api/hooks';
+import { AIVerdictCard } from '@/components/domain/ai-verdict';
 import { CnameChain } from '@/components/domain/cname-chain';
 import { DecisionHistory } from '@/components/domain/decision-history';
 import { SignalBadges } from '@/components/domain/signal-badges';
@@ -166,6 +167,8 @@ export function DomainDetailScreen() {
           </p>
         )}
       </Card>
+
+      <AIVerdictCard domainId={id} domainName={domain.name} isAdmin={isAdmin} />
 
       <div className="grid gap-3 lg:grid-cols-2">
         <Card title={`Bằng chứng · điểm ${formatScore(domain.score)}`}>

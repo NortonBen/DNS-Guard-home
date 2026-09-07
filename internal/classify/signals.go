@@ -383,6 +383,62 @@ func virusTotalSignals(f Facts, w Weights, r Rules) []Signal {
 	return nil
 }
 
+// aiConfidenceFloor là mức tin cậy tối thiểu để kết luận của model được tính.
+//
+// Model được dặn "không chắc thì trả content với confidence thấp", nên một kết
+// luận dưới mức này chính là model đang nói nó không biết. Đếm nó vào điểm là
+// biến lời thú nhận thiếu chắc chắn thành bằng chứng.
+const aiConfidenceFloor = 0.6
+
+// aiAdtechCategories là các nhãn model trả về được coi là buộc tội.
+//
+// cdn và content không nằm đây: cdn là hạ tầng trung tính, còn content là nhãn
+// mặc định khi model không kết luận được — cả hai không phải bằng chứng buộc tội.
+var aiAdtechCategories = map[string]bool{
+	string(CategoryAds):          true,
+	string(CategoryTracking):     true,
+	string(CategoryTelemetry):    true,
+	string(CategoryMalware):      true,
+	string(CategoryCryptomining): true,
+	string(CategoryAdult):        true,
+}
+
+// aiSignals — kết luận của model ngôn ngữ.
+//
+// Không nhận Rules: khác với mọi nhóm khác, nhóm này không có ngưỡng nào để người
+// vận hành chỉnh. Thứ chỉnh được là trọng số, và đó là đúng chỗ — người dùng quyết
+// định "tin AI đến đâu", không quyết định "AI được coi là đã kết luận khi nào".
+func aiSignals(f Facts, w Weights) []Signal {
+	ai := f.AI
+	if !ai.Checked || ai.Category == "" || ai.Confidence < aiConfidenceFloor {
+		return nil
+	}
+
+	detail := map[string]any{
+		"category": ai.Category, "confidence": ai.Confidence,
+	}
+	if ai.Model != "" {
+		detail["model"] = ai.Model
+	}
+	if ai.Reason != "" {
+		detail["reason"] = truncate(ai.Reason, 160)
+	}
+
+	if aiAdtechCategories[ai.Category] {
+		return []Signal{{
+			Kind: KindAIAdtech, Weight: w.Get(KindAIAdtech), Detail: detail,
+		}}
+	}
+	// Chỉ content mới kéo điểm xuống. cdn để trung tính: một domain CDN vẫn có thể
+	// đang phục vụ hạ tầng theo dõi, và hạ điểm nó sẽ che mất tín hiệu khác.
+	if ai.Category == string(CategoryContent) {
+		return []Signal{{
+			Kind: KindAIClean, Weight: w.Get(KindAIClean), Detail: detail,
+		}}
+	}
+	return nil
+}
+
 // hostOf lấy phần host của một URL mà không cần phân tích đầy đủ.
 func hostOf(rawURL string) string {
 	s := rawURL

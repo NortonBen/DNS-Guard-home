@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"net/netip"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,21 +23,47 @@ type Event struct {
 	At     time.Time
 }
 
+// Resolution là một lượt phân giải đã bóc tách xong: tên được hỏi và các địa chỉ
+// mà câu trả lời trả về.
+//
+// Không có trường client. IP nguồn của một câu trả lời là resolver chứ không phải
+// thiết bị đã hỏi, và IP đích chỉ đúng ở chiều router → client, không đúng ở chiều
+// upstream → router. Việc quy kết client lấy bằng cách nối với truy vấn tương ứng
+// đã ghi trong query_events, nên ánh xạ ở đây cố ý không phụ thuộc client.
+type Resolution struct {
+	Domain string
+	ETLD1  string
+	IPs    []netip.Addr
+	TTL    uint32
+	At     time.Time
+}
+
 // Sink là nơi ingest ghi sự kiện xuống.
 //
 // Interface khai báo ở đây, nơi tiêu thụ, chứ không ở package store: ingest không
 // cần biết gì về CSDL ngoài việc "đưa được một lô sự kiện đi đâu đó".
 type Sink interface {
 	WriteEvents(ctx context.Context, events []Event) error
+	WriteResolutions(ctx context.Context, resolutions []Resolution) error
+}
+
+// FrameRecorder nhận bản sao khung Ethernet để ghi ra file điều tra.
+//
+// Khai báo ở đây, nơi tiêu thụ, cùng lý do như Sink: ingest không cần biết gì về định
+// dạng pcap ngoài việc "đưa được một khung đi đâu đó". Cài đặt phải không bao giờ
+// chặn — nó nằm ngay trên đường đọc socket.
+type FrameRecorder interface {
+	Write(frame []byte)
 }
 
 // Stats là số liệu vận hành, phục vụ /health và dashboard.
 type Stats struct {
-	PacketsReceived int64 `json:"packets_received"`
-	EventsAccepted  int64 `json:"events_accepted"`
-	PacketsDropped  int64 `json:"packets_dropped"`
-	DecodeErrors    int64 `json:"decode_errors"`
-	LastEventAgeSec int64 `json:"last_event_age_s"`
+	PacketsReceived     int64 `json:"packets_received"`
+	EventsAccepted      int64 `json:"events_accepted"`
+	ResolutionsAccepted int64 `json:"resolutions_accepted"`
+	PacketsDropped      int64 `json:"packets_dropped"`
+	DecodeErrors        int64 `json:"decode_errors"`
+	LastEventAgeSec     int64 `json:"last_event_age_s"`
 
 	// ListenError khác rỗng nghĩa là bộ nhận không mở được cổng và sẽ không bao giờ
 	// nhận được gì. Phân biệt trường hợp này với "cổng mở nhưng không có lưu lượng"
@@ -76,6 +103,7 @@ type Listener struct {
 
 	packets  atomic.Int64
 	accepted atomic.Int64
+	resolved atomic.Int64
 	dropped  atomic.Int64
 	errs     atomic.Int64
 	lastAt   atomic.Int64 // Unix giây của sự kiện gần nhất
@@ -85,6 +113,9 @@ type Listener struct {
 
 	// localAddr là địa chỉ thật sau khi bind, khác cấu hình khi cổng đặt là 0.
 	localAddr atomic.Pointer[string]
+
+	// recorder ghi khung thô ra file pcap. Nil nghĩa là tắt, và đó là mặc định.
+	recorder atomic.Pointer[FrameRecorder]
 
 	// etld1Cache tránh gọi Public Suffix List cho mỗi gói. Một mạng gia đình chỉ
 	// gặp vài chục nghìn tên miền phân biệt, nên cache đầy đủ là rẻ.
@@ -97,11 +128,21 @@ func NewListener(opts Options, sink Sink, log *slog.Logger) *Listener {
 	return &Listener{opts: opts, sink: sink, log: log}
 }
 
+// SetRecorder bật ghi pcap. Gọi trước Run.
+//
+// Đặt sau khi dựng chứ không qua Options: ghi pcap mặc định tắt, và phần lớn lời gọi
+// NewListener — kể cả trong test — không quan tâm tới nó.
+func (l *Listener) SetRecorder(rec FrameRecorder) { l.recorder.Store(&rec) }
+
 // Run mở socket UDP và chạy tới khi ctx bị hủy.
 //
-// Hai goroutine: một chỉ đọc socket và bóc gói, một chỉ gom lô và ghi CSDL. Tách ra
-// để việc ghi đĩa chậm không làm đầy bộ đệm nhận của nhân và mất gói — datagram UDP
-// mất là mất hẳn, không có cách nào lấy lại.
+// Ba goroutine: một chỉ đọc socket và bóc gói, hai goroutine còn lại gom lô và ghi
+// CSDL — một cho truy vấn, một cho lượt phân giải. Tách ra để việc ghi đĩa chậm
+// không làm đầy bộ đệm nhận của nhân và mất gói — datagram UDP mất là mất hẳn,
+// không có cách nào lấy lại.
+//
+// Hai đường ghi tách biệt để một bên chậm không chặn bên kia: bảng phân giải có
+// ràng buộc duy nhất nên lượt ghi của nó đắt hơn ghi log truy vấn.
 func (l *Listener) Run(ctx context.Context) error {
 	addr, err := net.ResolveUDPAddr("udp", l.opts.Addr)
 	if err != nil {
@@ -129,12 +170,17 @@ func (l *Listener) Run(ctx context.Context) error {
 
 	l.log.Info("nhận luồng TZSP", "addr", bound)
 
-	queue := make(chan Event, l.opts.QueueSize)
+	events := make(chan Event, l.opts.QueueSize)
+	resolutions := make(chan Resolution, l.opts.QueueSize)
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		l.writeLoop(ctx, queue)
+		batchLoop(ctx, events, l.opts.BatchSize, l.opts.FlushEvery, l.writeEvents)
+	}()
+	go func() {
+		defer wg.Done()
+		batchLoop(ctx, resolutions, l.opts.BatchSize, l.opts.FlushEvery, l.writeResolutions)
 	}()
 
 	go func() {
@@ -146,7 +192,8 @@ func (l *Listener) Run(ctx context.Context) error {
 	for {
 		n, _, err := conn.ReadFromUDP(buf)
 		if err != nil {
-			close(queue)
+			close(events)
+			close(resolutions)
 			wg.Wait()
 			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
 				return nil
@@ -156,31 +203,52 @@ func (l *Listener) Run(ctx context.Context) error {
 		}
 		l.packets.Add(1)
 
-		ev, ok := l.decode(buf[:n])
-		if !ok {
+		// Bóc TZSP tách khỏi bóc Ethernet để khung thô đi được vào bộ ghi pcap trước
+		// khi bị diễn giải. File điều tra phải chứa cả gói mà tầng dưới không hiểu:
+		// một cuộc tấn công dùng DNS dị dạng sẽ biến mất khỏi bằng chứng nếu ta chỉ
+		// ghi những gì mình bóc được.
+		frame, err := tzspPayload(buf[:n])
+		if err != nil {
+			l.countDecodeError(err)
+			continue
+		}
+		if rec := l.recorder.Load(); rec != nil {
+			(*rec).Write(frame)
+		}
+
+		pkt, err := decodeEthernet(frame)
+		if err != nil {
+			l.countDecodeError(err)
 			continue
 		}
 
-		select {
-		case queue <- ev:
-		default:
-			// Hàng đợi đầy nghĩa là CSDL không theo kịp. Bỏ sự kiện và đếm lại còn
-			// hơn chặn vòng đọc, vì chặn ở đây làm mất gói ở tầng nhân mà không ai
-			// biết. Số liệu này hiện trên /health.
-			l.dropped.Add(1)
+		// Hàng đợi đầy nghĩa là CSDL không theo kịp. Bỏ bản ghi và đếm lại còn hơn
+		// chặn vòng đọc, vì chặn ở đây làm mất gói ở tầng nhân mà không ai biết. Số
+		// liệu này hiện trên /health.
+		if pkt.answer {
+			if res, ok := l.decodeAnswer(pkt); ok {
+				select {
+				case resolutions <- res:
+				default:
+					l.dropped.Add(1)
+				}
+			}
+			continue
+		}
+
+		if ev, ok := l.decodeQuery(pkt); ok {
+			select {
+			case events <- ev:
+			default:
+				l.dropped.Add(1)
+			}
 		}
 	}
 }
 
-// decode bóc một datagram thành Event. Trả về false nếu gói không phải truy vấn
-// DNS quan tâm — đó là chuyện bình thường, không phải lỗi.
-func (l *Listener) decode(buf []byte) (Event, bool) {
-	pkt, err := decodeTZSP(buf)
-	if err != nil {
-		l.countDecodeError(err)
-		return Event{}, false
-	}
-
+// decodeQuery bóc payload của một gói truy vấn thành Event. Trả về false nếu gói
+// không phải truy vấn quan tâm — đó là chuyện bình thường, không phải lỗi.
+func (l *Listener) decodeQuery(pkt packet) (Event, bool) {
 	name, qtype, err := parseQuestion(pkt.payload)
 	if err != nil {
 		l.countDecodeError(err)
@@ -199,21 +267,53 @@ func (l *Listener) decode(buf []byte) (Event, bool) {
 	}, true
 }
 
+// decodeAnswer bóc payload của một gói trả lời thành Resolution.
+//
+// Không lọc theo loại bản ghi như decodeQuery: parseAnswer chỉ trả về A và AAAA,
+// nên tới đây đã là thứ cần. Vẫn kiểm tra tên miền, vì tên trong câu trả lời cũng
+// tới từ mạng và cũng cần được coi là dữ liệu không tin cậy.
+func (l *Listener) decodeAnswer(pkt packet) (Resolution, bool) {
+	name, ips, ttl, err := parseAnswer(pkt.payload)
+	if err != nil {
+		l.countDecodeError(err)
+		return Resolution{}, false
+	}
+	if !validDomain(name) {
+		return Resolution{}, false
+	}
+
+	return Resolution{
+		Domain: name,
+		ETLD1:  l.etld1(name),
+		IPs:    ips,
+		TTL:    ttl,
+		At:     time.Now().UTC(),
+	}, true
+}
+
 // countDecodeError chỉ đếm những lỗi thật sự bất thường. Gói không phải DNS hoặc
 // không phải IPv4/IPv6 là chuyện thường xuyên trên một cổng mirror và không đáng
 // báo động.
 func (l *Listener) countDecodeError(err error) {
-	if errors.Is(err, errNotDNSQuery) || errors.Is(err, errUnsupportedL3) {
+	switch {
+	case errors.Is(err, errNotDNSQuery), errors.Is(err, errUnsupportedL3):
+		return
+	// Câu trả lời không có địa chỉ là chuyện thường: NXDOMAIN, hoặc câu trả lời chỉ
+	// gồm CNAME và SOA. Không phải gói hỏng.
+	case errors.Is(err, errNotDNSAnswer), errors.Is(err, errNoAnswerRecords):
 		return
 	}
 	l.errs.Add(1)
 }
 
-// writeLoop gom sự kiện thành lô rồi ghi. Ghi theo lô là bắt buộc chứ không phải
+// batchLoop gom phần tử thành lô rồi ghi. Ghi theo lô là bắt buộc chứ không phải
 // tối ưu: Pi có thể chạy thẻ SD, và một giao dịch cho mỗi truy vấn sẽ mòn thẻ.
-func (l *Listener) writeLoop(ctx context.Context, queue <-chan Event) {
-	batch := make([]Event, 0, l.opts.BatchSize)
-	ticker := time.NewTicker(l.opts.FlushEvery)
+//
+// Tổng quát theo kiểu phần tử vì truy vấn và lượt phân giải cần đúng cùng một cách
+// gom lô, chỉ khác nhau ở hàm ghi cuối cùng.
+func batchLoop[T any](ctx context.Context, queue <-chan T, size int, every time.Duration, write func(context.Context, []T)) {
+	batch := make([]T, 0, size)
+	ticker := time.NewTicker(every)
 	defer ticker.Stop()
 
 	flush := func() {
@@ -225,30 +325,44 @@ func (l *Listener) writeLoop(ctx context.Context, queue <-chan Event) {
 		writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
 
-		if err := l.sink.WriteEvents(writeCtx, batch); err != nil {
-			l.log.Error("ghi lô sự kiện thất bại", "count", len(batch), "err", err)
-		} else {
-			l.accepted.Add(int64(len(batch)))
-			l.lastAt.Store(time.Now().Unix())
-		}
+		write(writeCtx, batch)
 		batch = batch[:0]
 	}
 
 	for {
 		select {
-		case ev, ok := <-queue:
+		case v, ok := <-queue:
 			if !ok {
 				flush()
 				return
 			}
-			batch = append(batch, ev)
-			if len(batch) >= l.opts.BatchSize {
+			batch = append(batch, v)
+			if len(batch) >= size {
 				flush()
 			}
 		case <-ticker.C:
 			flush()
 		}
 	}
+}
+
+func (l *Listener) writeEvents(ctx context.Context, batch []Event) {
+	if err := l.sink.WriteEvents(ctx, batch); err != nil {
+		l.log.Error("ghi lô sự kiện thất bại", "count", len(batch), "err", err)
+		return
+	}
+	l.accepted.Add(int64(len(batch)))
+	// Chỉ truy vấn mới cập nhật mốc này: cảnh báo "không nhận được truy vấn mới"
+	// trên dashboard phải im lặng đúng lúc luồng truy vấn im lặng.
+	l.lastAt.Store(time.Now().Unix())
+}
+
+func (l *Listener) writeResolutions(ctx context.Context, batch []Resolution) {
+	if err := l.sink.WriteResolutions(ctx, batch); err != nil {
+		l.log.Error("ghi lô phân giải thất bại", "count", len(batch), "err", err)
+		return
+	}
+	l.resolved.Add(int64(len(batch)))
 }
 
 func (l *Listener) etld1(name string) string {
@@ -263,11 +377,12 @@ func (l *Listener) etld1(name string) string {
 // Stats trả về số liệu hiện tại.
 func (l *Listener) Stats() Stats {
 	s := Stats{
-		PacketsReceived: l.packets.Load(),
-		EventsAccepted:  l.accepted.Load(),
-		PacketsDropped:  l.dropped.Load(),
-		DecodeErrors:    l.errs.Load(),
-		LastEventAgeSec: -1,
+		PacketsReceived:     l.packets.Load(),
+		EventsAccepted:      l.accepted.Load(),
+		ResolutionsAccepted: l.resolved.Load(),
+		PacketsDropped:      l.dropped.Load(),
+		DecodeErrors:        l.errs.Load(),
+		LastEventAgeSec:     -1,
 	}
 	if last := l.lastAt.Load(); last > 0 {
 		s.LastEventAgeSec = time.Now().Unix() - last

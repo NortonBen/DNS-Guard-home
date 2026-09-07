@@ -37,6 +37,21 @@ const (
 	// truy vấn và chờ tới khi hết thời gian nếu máy đó không có gì lắng nghe. Khác
 	// biệt đó thấy rõ trên thiết bị di động, nên phải chọn được.
 	SettingPublishSink = "publish.sink_address"
+
+	// Cấu hình nhà cung cấp model ngôn ngữ.
+	//
+	// Nằm ở CSDL chính chứ không ở CSDL nhật ký AI, cùng chỗ với khóa VirusTotal:
+	// đây là cấu hình vận hành cùng loại, và người vận hành chỉ nên có một nơi để
+	// tìm khi đổi khóa. CSDL nhật ký AI giữ dữ liệu vận hành — lượt gọi, kết luận,
+	// skill, máy chủ MCP — chứ không giữ khóa.
+	//
+	// Khóa nằm ở dạng đọc được, cùng lý do với khóa VirusTotal: mã hóa nó bằng một
+	// khóa cũng nằm trên cùng máy chỉ tạo cảm giác an toàn.
+	SettingAIEnabled   = "ai.enabled"
+	SettingAIBaseURL   = "ai.base_url"
+	SettingAIModel     = "ai.model"
+	SettingAIAPIKey    = "ai.api_key"
+	SettingAIBatchSize = "ai.batch_size"
 )
 
 // GetSetting đọc một giá trị cấu hình vào dest. Trả về false nếu chưa được đặt.

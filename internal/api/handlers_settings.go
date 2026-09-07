@@ -38,6 +38,12 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	if s.enrichers != nil {
 		tables = s.enrichers.Statuses()
 	}
+	// Danh sách hạ tầng độc hại không nằm trong sổ đăng ký nguồn làm giàu — nó tra
+	// theo địa chỉ chứ không theo tên miền — nhưng vẫn là một bảng tra cứu tải về
+	// được, nên phải hiện ở màn Cài đặt cùng hai bảng kia.
+	if s.threats != nil {
+		tables = append(tables, s.threats.Status())
+	}
 	if tables == nil {
 		tables = []enrich.TableStatus{}
 	}
@@ -398,7 +404,7 @@ type refreshLookupRequest struct {
 // handleRefreshLookup tải lại một bảng tra cứu cục bộ.
 func (s *Server) handleRefreshLookup(w http.ResponseWriter, r *http.Request) {
 	kind := chi.URLParam(r, "kind")
-	if kind != "asn" && kind != "rank" {
+	if kind != "asn" && kind != "rank" && kind != "ipthreat" {
 		writeError(w, http.StatusBadRequest, CodeInvalidInput,
 			"Bảng tra cứu không rõ", map[string]any{"kind": kind})
 		return

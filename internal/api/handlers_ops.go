@@ -365,6 +365,17 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		querylog["decode_errors"] = stats.DecodeErrors
 		listenError = stats.ListenError
 
+		// Số này là cách duy nhất để biết bộ lọc sniffer có gửi cả gói trả lời sang
+		// hay không. Nó đứng yên ở 0 trong khi events_accepted vẫn tăng nghĩa là mạng
+		// chỉ mirror truy vấn: bảng domain_ips sẽ rỗng vĩnh viễn, và mọi tính năng
+		// điều tra theo IP im lặng không có dữ liệu mà không báo lỗi ở đâu cả.
+		querylog["events_accepted"] = stats.EventsAccepted
+		querylog["resolutions_accepted"] = stats.ResolutionsAccepted
+		if stats.EventsAccepted > 100 && stats.ResolutionsAccepted == 0 {
+			querylog["message"] = "Chỉ nhận được truy vấn, không có bản ghi trả lời — " +
+				"điều tra theo IP sẽ không có dữ liệu. Kiểm tra filter-port=53 trên sniffer."
+		}
+
 		// Hàng đợi đầy nghĩa là CSDL không theo kịp lưu lượng. Sự kiện bị bỏ không
 		// bao giờ lấy lại được, nên nó phải hiện ra chứ không chỉ nằm trong bộ đếm.
 		if stats.PacketsReceived > 0 {
@@ -378,6 +389,27 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 				degrade("degraded")
 			}
 		}
+	}
+
+	// Ghi pcap là tuỳ chọn nên vắng mặt hoàn toàn khỏi /health khi tắt. Khi bật, số
+	// khung bị bỏ và lỗi ghi phải hiện ra: một file điều tra thiếu gói mà không ai
+	// biết còn tệ hơn không có file nào.
+	if s.pcap != nil {
+		st := s.pcap.Stats()
+		pcapInfo := map[string]any{
+			"ok":             st.WriteError == "",
+			"frames_written": st.FramesWritten,
+			"frames_dropped": st.FramesDropped,
+			"total_bytes":    st.TotalBytes,
+		}
+		if st.CurrentFile != "" {
+			pcapInfo["current_file"] = st.CurrentFile
+		}
+		if st.WriteError != "" {
+			pcapInfo["message"] = "Không ghi được file pcap: " + st.WriteError
+			degrade("degraded")
+		}
+		checks["pcap"] = pcapInfo
 	}
 
 	switch {

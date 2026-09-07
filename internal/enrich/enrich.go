@@ -19,6 +19,14 @@ var ErrDisabled = errors.New("nguồn làm giàu bị tắt")
 // ErrCircuitOpen báo rằng nguồn đang tạm ngưng vì lỗi liên tiếp.
 var ErrCircuitOpen = errors.New("nguồn đang tạm ngưng sau nhiều lỗi liên tiếp")
 
+// ErrNoCredentials báo rằng nguồn cần khóa API mà chưa được cấu hình.
+//
+// Tách khỏi ErrDisabled vì hai thứ khác nhau về cách sửa: bị tắt là quyết định
+// của người vận hành, còn thiếu khóa là việc chưa làm xong. Cả hai giống nhau ở
+// một điểm quan trọng — chúng nói về *nguồn*, không nói gì về domain, nên không
+// bao giờ được ghi thành một dòng thất bại trong domain_facts.
+var ErrNoCredentials = errors.New("nguồn chưa được cấu hình khóa API")
+
 // Enricher là một nguồn làm giàu. Mọi nguồn dùng chung interface này để runner
 // không cần biết chúng khác nhau ở đâu.
 type Enricher interface {
@@ -26,6 +34,41 @@ type Enricher interface {
 	Name() string
 	// Enrich tra cứu một domain. Trả về dữ liệu sẽ được mã hóa JSON và lưu lại.
 	Enrich(ctx context.Context, domain string) (any, error)
+}
+
+// BatchEnricher là nguồn hỏi được nhiều domain trong một lượt gọi.
+//
+// Tồn tại vì một nguồn tính tiền theo lượt gọi chứ không theo domain — hỏi bốn
+// mươi tên miền trong một request rẻ hơn hẳn bốn mươi request, và phần mô tả bài
+// toán chỉ phải gửi đi một lần thay vì bốn mươi lần.
+//
+// Nguồn cài giao diện này vẫn phải cài Enrich cho một domain: tầng trên đôi khi
+// cần hỏi lại đúng một tên, và bắt nó tự gói thành lô một phần tử là việc của
+// nguồn chứ không phải của người gọi.
+type BatchEnricher interface {
+	Enricher
+	// EnrichBatch trả về kết quả theo tên domain. Domain vắng mặt trong map nghĩa
+	// là nguồn không kết luận được về nó — không phải lỗi.
+	EnrichBatch(ctx context.Context, domains []string) (map[string]any, error)
+	// BatchSize là số domain tối đa nên gửi trong một lượt.
+	BatchSize() int
+}
+
+// AsBatch cho biết một nguồn có hỏi được theo lô không, và trả về nó dưới dạng
+// BatchEnricher đã bọc đủ giới hạn tốc độ cùng circuit breaker.
+//
+// Kiểm tra phần lõi chứ không phải lớp bọc: lớp bọc luôn có phương thức
+// EnrichBatch để chuyển tiếp, nên ép kiểu thẳng vào nó sẽ nói "có" cho cả những
+// nguồn chỉ hỏi được từng domain một.
+func AsBatch(e Enricher) (BatchEnricher, bool) {
+	if g, ok := e.(*guarded); ok {
+		if _, ok := g.inner.(BatchEnricher); ok {
+			return g, true
+		}
+		return nil, false
+	}
+	b, ok := e.(BatchEnricher)
+	return b, ok
 }
 
 // breaker là circuit breaker cho một nguồn.
@@ -102,6 +145,39 @@ func (g *guarded) Enrich(ctx context.Context, domain string) (any, error) {
 	data, err := g.inner.Enrich(ctx, domain)
 	g.breaker.record(err)
 	return data, err
+}
+
+// EnrichBatch chuyển tiếp một lượt hỏi lô qua đúng các lớp bảo vệ của Enrich.
+//
+// Chỉ tiêu MỘT token giới hạn tốc độ cho cả lô, vì giới hạn của nhà cung cấp đếm
+// theo request chứ không theo số domain trong đó. Tính theo domain sẽ làm một lô
+// bốn mươi tên phải chờ vô cớ.
+func (g *guarded) EnrichBatch(ctx context.Context, domains []string) (map[string]any, error) {
+	batcher, ok := g.inner.(BatchEnricher)
+	if !ok {
+		return nil, fmt.Errorf("nguồn %q không hỏi được theo lô", g.Name())
+	}
+	if !g.enabled.Load() {
+		return nil, ErrDisabled
+	}
+	if !g.breaker.allow() {
+		return nil, ErrCircuitOpen
+	}
+	if err := g.limiter.Wait(ctx); err != nil {
+		return nil, fmt.Errorf("chờ giới hạn tốc độ: %w", err)
+	}
+
+	data, err := batcher.EnrichBatch(ctx, domains)
+	g.breaker.record(err)
+	return data, err
+}
+
+// BatchSize chuyển tiếp kích thước lô của nguồn lõi.
+func (g *guarded) BatchSize() int {
+	if batcher, ok := g.inner.(BatchEnricher); ok {
+		return batcher.BatchSize()
+	}
+	return 1
 }
 
 // Registry giữ tập nguồn đang hoạt động.

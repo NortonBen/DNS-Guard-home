@@ -33,6 +33,15 @@ import type {
   PublishSettings,
   CustomRules,
   RulesResponse,
+  AIStatus,
+  AIRequest,
+  AIVerdict,
+  AIAnswer,
+  AIChat,
+  AIChatMessage,
+  AISkill,
+  AIMCPServer,
+  AITool,
 } from './types';
 
 /**
@@ -59,6 +68,15 @@ export const qk = {
   unblockRequests: () => ['unblock-requests'] as const,
   settings: () => ['settings'] as const,
   job: (id: string) => ['job', id] as const,
+  aiStatus: () => ['ai', 'status'] as const,
+  aiTools: () => ['ai', 'tools'] as const,
+  aiHistory: (kind: string, offset: number) => ['ai', 'history', kind, offset] as const,
+  aiRequest: (id: number) => ['ai', 'history', id] as const,
+  aiVerdicts: (domain: string) => ['ai', 'verdicts', domain] as const,
+  aiChats: () => ['ai', 'chats'] as const,
+  aiChat: (id: number) => ['ai', 'chats', id] as const,
+  aiSkills: () => ['ai', 'skills'] as const,
+  aiMCPServers: () => ['ai', 'mcp-servers'] as const,
 };
 
 export interface NetworkFilters {
@@ -608,6 +626,206 @@ export function useApplyRules() {
     onSuccess: () => {
       client.invalidateQueries({ queryKey: qk.rules() });
       client.invalidateQueries({ queryKey: ['domains'] });
+    },
+  });
+}
+
+/* ---- Hỏi AI ---- */
+
+/**
+ * Trạng thái nhà cung cấp model.
+ *
+ * `staleTime` ngắn vì màn Cài đặt đổi nó và người dùng cần thấy kết quả ngay; nhưng
+ * vẫn có `staleTime` để nút "Hỏi AI" ở nhiều màn không mỗi cái gọi một lượt.
+ */
+export function useAIStatus() {
+  return useQuery({
+    queryKey: qk.aiStatus(),
+    queryFn: () => api<AIStatus>('/ai/status'),
+    staleTime: 30_000,
+  });
+}
+
+export function useUpdateAISettings() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      base_url?: string;
+      model?: string;
+      api_key?: string;
+      batch_size?: number;
+      enabled?: boolean;
+    }) => api<AIStatus>('/ai/settings', { method: 'PUT', body }),
+    onSuccess: () => client.invalidateQueries({ queryKey: qk.aiStatus() }),
+  });
+}
+
+/**
+ * Danh sách công cụ model gọi được.
+ *
+ * `warnings` chứa tên các máy chủ MCP không kết nối được — hiện ra thay vì nuốt, vì
+ * một máy chủ khai sai chỉ lộ ra khi người dùng thấy câu trả lời thiếu dữ liệu.
+ */
+export function useAITools(enabled: boolean) {
+  return useQuery({
+    queryKey: qk.aiTools(),
+    queryFn: () => api<{ tools: AITool[]; warnings: string[] }>('/ai/tools'),
+    enabled,
+  });
+}
+
+/**
+ * Hỏi model một câu.
+ *
+ * Không đặt `onSuccess` vô hiệu hóa cache hội thoại: màn hỏi đáp giữ lượt vừa trả
+ * lời trong state cục bộ để hiện ngay, và tải lại cả cuộc chỉ để thấy đúng thứ vừa
+ * có sẽ làm khung chat nháy một lượt.
+ */
+export function useAskAI() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { question: string; chat_id?: number; domain?: string }) =>
+      api<AIAnswer>('/ai/ask', { method: 'POST', body }),
+    onSuccess: () => client.invalidateQueries({ queryKey: qk.aiChats() }),
+  });
+}
+
+export function useAIChats(enabled: boolean) {
+  return useQuery({
+    queryKey: qk.aiChats(),
+    queryFn: () => api<{ items: AIChat[] }>('/ai/chats'),
+    enabled,
+  });
+}
+
+export function useAIChat(id: number | null) {
+  return useQuery({
+    queryKey: qk.aiChat(id ?? 0),
+    queryFn: () => api<{ id: number; messages: AIChatMessage[] }>(`/ai/chats/${id}`),
+    enabled: id !== null && id > 0,
+  });
+}
+
+export function useDeleteAIChat() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api<void>(`/ai/chats/${id}`, { method: 'DELETE' }),
+    onSuccess: () => client.invalidateQueries({ queryKey: qk.aiChats() }),
+  });
+}
+
+export function useAIHistory(kind: string, offset: number, enabled: boolean) {
+  return useQuery({
+    queryKey: qk.aiHistory(kind, offset),
+    queryFn: () =>
+      api<{ items: AIRequest[]; total: number; offset: number; limit: number }>(
+        `/ai/history${query({ kind, offset, limit: 25 })}`,
+      ),
+    enabled,
+  });
+}
+
+/** Một lượt gọi đầy đủ, kèm prompt và phản hồi thô — chỗ duy nhất trả lời "vì sao". */
+export function useAIRequest(id: number | null) {
+  return useQuery({
+    queryKey: qk.aiRequest(id ?? 0),
+    queryFn: () => api<{ request: AIRequest; verdicts: AIVerdict[] }>(`/ai/history/${id}`),
+    enabled: id !== null && id > 0,
+  });
+}
+
+export function useAIVerdicts(domain: string, enabled: boolean) {
+  return useQuery({
+    queryKey: qk.aiVerdicts(domain),
+    queryFn: () => api<{ items: AIVerdict[] }>(`/ai/verdicts${query({ domain })}`),
+    enabled: enabled && domain !== '',
+  });
+}
+
+/** Xếp hàng một lượt hỏi cho các domain tới hạn. */
+export function useRunAIClassify() {
+  return useMutation({
+    mutationFn: () => api<{ job_id: string }>('/ai/classify', { method: 'POST' }),
+  });
+}
+
+/**
+ * Hỏi lại model về một domain.
+ *
+ * Trả về job id chứ không phải kết quả: một lượt gọi model mất vài giây tới vài chục
+ * giây, và giữ kết nối HTTP suốt thời gian đó sẽ hết hạn ở proxy.
+ */
+export function useAIRecheck() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (domainId: number) =>
+      api<{ job_id: string; domain: string }>(`/domains/${domainId}/ai-recheck`, {
+        method: 'POST',
+      }),
+    onSuccess: (_data, domainId) => {
+      client.invalidateQueries({ queryKey: qk.domain(domainId) });
+    },
+  });
+}
+
+export function useAISkills(enabled: boolean) {
+  return useQuery({
+    queryKey: qk.aiSkills(),
+    queryFn: () => api<{ items: AISkill[] }>('/ai/skills'),
+    enabled,
+  });
+}
+
+export function useSaveAISkill() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: Partial<AISkill> & { name: string }) =>
+      api<{ id: number }>('/ai/skills', { method: 'PUT', body }),
+    onSuccess: () => client.invalidateQueries({ queryKey: qk.aiSkills() }),
+  });
+}
+
+export function useDeleteAISkill() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api<void>(`/ai/skills/${id}`, { method: 'DELETE' }),
+    onSuccess: () => client.invalidateQueries({ queryKey: qk.aiSkills() }),
+  });
+}
+
+export function useAIMCPServers(enabled: boolean) {
+  return useQuery({
+    queryKey: qk.aiMCPServers(),
+    queryFn: () => api<{ items: AIMCPServer[] }>('/ai/mcp-servers'),
+    enabled,
+  });
+}
+
+export function useSaveMCPServer() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      name: string;
+      url: string;
+      auth_header?: string;
+      enabled: boolean;
+      note?: string;
+    }) => api<{ id: number }>('/ai/mcp-servers', { method: 'PUT', body }),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: qk.aiMCPServers() });
+      // Công cụ đổi theo máy chủ MCP: danh sách cũ sẽ thiếu hoặc thừa.
+      client.invalidateQueries({ queryKey: qk.aiTools() });
+    },
+  });
+}
+
+export function useDeleteMCPServer() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (id: number) => api<void>(`/ai/mcp-servers/${id}`, { method: 'DELETE' }),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: qk.aiMCPServers() });
+      client.invalidateQueries({ queryKey: qk.aiTools() });
     },
   });
 }

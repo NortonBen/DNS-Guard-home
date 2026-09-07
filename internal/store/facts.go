@@ -18,6 +18,10 @@ var factTTL = map[string]time.Duration{
 	"rank": 7 * 24 * time.Hour,  // thứ hạng Tranco ổn định
 	"http": 14 * 24 * time.Hour, // nội dung trang đổi chậm
 	"vt":   30 * 24 * time.Hour, // kết luận của các engine đổi chậm
+	// Kết luận của model đổi khi chính model đổi, không khi domain đổi. Hai mươi
+	// mốt ngày là thoả hiệp: đủ dài để không đốt hạn mức vào cùng một domain, đủ
+	// ngắn để một domain đổi mục đích sử dụng được nhìn lại trong vòng một tháng.
+	"ai": 21 * 24 * time.Hour,
 }
 
 const day = 24 * time.Hour
@@ -44,6 +48,10 @@ var outcomeTTL = map[string]map[string]time.Duration{
 		"not_found": 7 * day,       // có thể được lập chỉ mục sau
 		"quota":     time.Hour,     // thử lại trong ngày
 		"other":     6 * time.Hour, //
+	},
+	"ai": {
+		"quota": time.Hour,     // hạn mức đặt lại theo ngày, thử lại trong ngày
+		"other": 6 * time.Hour, //
 	},
 }
 

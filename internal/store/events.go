@@ -117,6 +117,46 @@ type hourAgg struct {
 	clients map[int64]struct{}
 }
 
+// lookupDomainIDs tra id của các domain theo tên. Tên chưa có trong bảng vắng mặt
+// khỏi kết quả; hàm này không tạo gì cả.
+//
+// Tra theo lô: một truy vấn cho tối đa 500 tên thay vì một truy vấn cho mỗi tên.
+func lookupDomainIDs(ctx context.Context, tx *sql.Tx, names []string) (map[string]int64, error) {
+	out := make(map[string]int64, len(names))
+	const chunk = 500
+	for start := 0; start < len(names); start += chunk {
+		end := min(start+chunk, len(names))
+		batch := names[start:end]
+
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(batch)), ",")
+		args := make([]any, len(batch))
+		for i, n := range batch {
+			args[i] = n
+		}
+
+		rows, err := tx.QueryContext(ctx,
+			`SELECT id, name FROM domains WHERE name IN (`+placeholders+`)`, args...)
+		if err != nil {
+			return nil, fmt.Errorf("lookup domains: %w", err)
+		}
+		for rows.Next() {
+			var id int64
+			var name string
+			if err := rows.Scan(&id, &name); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan domain: %w", err)
+			}
+			out[name] = id
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("iterate domains: %w", err)
+		}
+		rows.Close()
+	}
+	return out, nil
+}
+
 // resolveClients ánh xạ IP sang id, tạo mới khi cần.
 func (s *Store) resolveClients(ctx context.Context, tx *sql.Tx, events []ingest.Event) (map[string]int64, error) {
 	out := make(map[string]int64, 8)
@@ -173,38 +213,9 @@ func resolveDomains(ctx context.Context, tx *sql.Tx, events []ingest.Event) (map
 		names = append(names, name)
 	}
 
-	out := make(map[string]int64, len(names))
-	// Tra theo lô: một truy vấn cho tối đa 500 tên thay vì một truy vấn cho mỗi tên.
-	const chunk = 500
-	for start := 0; start < len(names); start += chunk {
-		end := min(start+chunk, len(names))
-		batch := names[start:end]
-
-		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(batch)), ",")
-		args := make([]any, len(batch))
-		for i, n := range batch {
-			args[i] = n
-		}
-
-		rows, err := tx.QueryContext(ctx,
-			`SELECT id, name FROM domains WHERE name IN (`+placeholders+`)`, args...)
-		if err != nil {
-			return nil, fmt.Errorf("lookup domains: %w", err)
-		}
-		for rows.Next() {
-			var id int64
-			var name string
-			if err := rows.Scan(&id, &name); err != nil {
-				rows.Close()
-				return nil, fmt.Errorf("scan domain: %w", err)
-			}
-			out[name] = id
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return nil, fmt.Errorf("iterate domains: %w", err)
-		}
-		rows.Close()
+	out, err := lookupDomainIDs(ctx, tx, names)
+	if err != nil {
+		return nil, err
 	}
 
 	now := Now()

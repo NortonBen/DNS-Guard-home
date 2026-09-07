@@ -37,6 +37,10 @@ const (
 	// Từ VirusTotal.
 	KindVTMalicious = "vt_malicious"
 	KindVTClean     = "vt_clean"
+
+	// Từ model ngôn ngữ.
+	KindAIAdtech = "ai_adtech"
+	KindAIClean  = "ai_clean"
 )
 
 // Ngưỡng kích hoạt tín hiệu. Khác với trọng số, chúng không sửa được qua giao diện:
@@ -124,6 +128,12 @@ var DefaultWeights = Weights{
 	// chính vì loại bằng chứng này.
 	KindVTMalicious: 4.0,
 	KindVTClean:     -1.0,
+
+	// Kết luận của model KHÔNG bao giờ tự nó đủ chặn: 2,5 nằm dưới ngưỡng ads 5,5
+	// và dưới cả ngưỡng malware 3,0. Lý do giống hệt nhóm HTTP, và mạnh hơn — một
+	// tín hiệu không giải thích trực tiếp được thì càng không được phép tự quyết.
+	KindAIAdtech: 2.5,
+	KindAIClean:  -2.0,
 }
 
 // SignalLabels là nhãn tiếng Việt cho giao diện chỉnh trọng số.
@@ -156,6 +166,9 @@ var SignalLabels = map[string]string{
 
 	KindVTMalicious: "VirusTotal: nhiều engine báo độc hại",
 	KindVTClean:     "VirusTotal: sạch",
+
+	KindAIAdtech: "AI xếp vào nhóm quảng cáo/theo dõi",
+	KindAIClean:  "AI xếp vào nội dung bình thường",
 }
 
 // infraKinds là các tín hiệu hạ tầng, dùng để tính độ tin cậy và để quyết định

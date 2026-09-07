@@ -23,9 +23,19 @@ var schedule = []periodic{
 	{kind: JobCatalog, every: time.Hour, atBoot: true},
 	{kind: JobLifecycle, every: 24 * time.Hour},
 	{kind: JobBehavior, every: 24 * time.Hour},
+	// Nhịp dày hơn các job hằng ngày vì địa chỉ mới xuất hiện liên tục, và tra cứu
+	// chỉ là tìm nhị phân trên bảng cục bộ nên gần như không tốn gì.
+	{kind: JobGeoIP, every: time.Hour, atBoot: true},
+	// Quét lại toàn bộ địa chỉ mỗi giờ. Không dựa vào dấu "đã kiểm tra" vì danh sách
+	// đe dọa thay đổi: địa chỉ sạch hôm qua có thể bị liệt kê hôm nay, và ngược lại.
+	{kind: JobIPThreat, every: time.Hour, atBoot: true},
 	{kind: JobGraph, every: 24 * time.Hour},
 	{kind: JobRetention, every: 24 * time.Hour},
 	{kind: JobPublish, every: 6 * time.Hour, atBoot: true},
+	// Nhịp thưa hơn hẳn các nguồn khác vì mỗi lượt là tiền. Không chạy lúc khởi
+	// động: khởi động lại dịch vụ ba lần trong một buổi chiều gỡ lỗi không nên
+	// thành ba hoá đơn.
+	{kind: JobAIClassify, every: 6 * time.Hour},
 }
 
 // schedule chạy bộ lập lịch: cứ mỗi phút, kiểm tra job nào tới hạn thì xếp hàng.

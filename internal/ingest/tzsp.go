@@ -49,18 +49,25 @@ var (
 	errUnsupportedL3 = errors.New("giao thức tầng mạng không hỗ trợ")
 )
 
-// packet là kết quả bóc tách một datagram TZSP: IP nguồn của client và phần payload
-// DNS còn nguyên để tầng trên giải mã.
+// packet là kết quả bóc tách một datagram TZSP: phần payload DNS còn nguyên để
+// tầng trên giải mã, kèm IP client khi đọc được.
 type packet struct {
 	client  netip.Addr
 	payload []byte
+
+	// answer bằng true nghĩa là gói trả lời. Khi đó client không có giá trị: IP
+	// nguồn của một câu trả lời là resolver chứ không phải thiết bị đã hỏi.
+	answer bool
 }
 
-// decodeTZSP bóc TZSP → Ethernet → IP → UDP và trả về payload DNS kèm IP client.
+// decodeTZSP bóc TZSP → Ethernet → IP → UDP và trả về payload DNS.
 //
-// Chỉ nhận gói có cổng đích 53: đó là truy vấn client gửi lên router. Gói có cổng
-// *nguồn* 53 là câu trả lời của router, mang IP nguồn của router chứ không phải của
-// client, nên bỏ qua.
+// Nhận cả hai chiều, vì bộ lọc filter-port=53 trên MikroTik khớp cả hai:
+//
+//   - Cổng *đích* 53 là truy vấn client gửi lên router. IP nguồn là client thật.
+//   - Cổng *nguồn* 53 là câu trả lời. IP nguồn là resolver chứ không phải client,
+//     nên gói này chỉ dùng để lấy ánh xạ domain → IP; việc quy kết client lấy từ
+//     truy vấn tương ứng đã ghi trước đó.
 func decodeTZSP(buf []byte) (packet, error) {
 	frame, err := tzspPayload(buf)
 	if err != nil {
@@ -175,8 +182,14 @@ func decodeUDP(src netip.Addr, b []byte) (packet, error) {
 	if len(b) < 8 {
 		return packet{}, fmt.Errorf("udp: %w", errShortPacket)
 	}
-	if dstPort := binary.BigEndian.Uint16(b[2:4]); dstPort != dnsPort {
-		return packet{}, fmt.Errorf("%w (cổng đích %d)", errNotDNSQuery, dstPort)
+	srcPort := binary.BigEndian.Uint16(b[0:2])
+	dstPort := binary.BigEndian.Uint16(b[2:4])
+	switch {
+	case dstPort == dnsPort:
+		return packet{client: src.Unmap(), payload: b[8:]}, nil
+	case srcPort == dnsPort:
+		return packet{payload: b[8:], answer: true}, nil
+	default:
+		return packet{}, fmt.Errorf("%w (cổng %d→%d)", errNotDNSQuery, srcPort, dstPort)
 	}
-	return packet{client: src.Unmap(), payload: b[8:]}, nil
 }

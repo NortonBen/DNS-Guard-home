@@ -17,13 +17,22 @@ import (
 
 // Config là toàn bộ cấu hình khởi động.
 type Config struct {
-	DBPath      string
-	Listen      string
-	TZSPListen  string
-	ListsDir    string
-	IP2ASNPath  string
-	TrancoPath  string
-	QuerylogDir string
+	DBPath     string
+	Listen     string
+	TZSPListen string
+	ListsDir   string
+	IP2ASNPath string
+	TrancoPath string
+	// IPThreatPath là nơi lưu danh sách hạ tầng độc hại tải về.
+	IPThreatPath string
+
+	// Ghi pcap phục vụ điều tra. Mặc định tắt: nó ghi liên tục xuống đĩa, và trên
+	// một máy chạy thẻ SD thì đó là quyết định người vận hành phải tự đưa ra.
+	PcapEnabled    bool
+	PcapDir        string
+	PcapMaxFileMB  int
+	PcapMaxTotalMB int
+	QuerylogDir    string
 
 	LogRetentionDays    int
 	HourlyRetentionDays int
@@ -47,6 +56,23 @@ type Config struct {
 	PublishSink    string
 	ListsAllowCIDR []string
 
+	// AIDBPath là file nhật ký AI — tách hẳn khỏi CSDL chính. Rỗng nghĩa là đặt
+	// cạnh CSDL chính với hậu tố -ai.
+	AIDBPath string
+	// Cấu hình nhà cung cấp model. Mọi endpoint nói được giao thức Chat Completions
+	// đều dùng được; mặc định trỏ DeepSeek vì nó rẻ nhất trong nhóm đủ tốt cho việc
+	// phân loại tên miền.
+	AIBaseURL string
+	AIAPIKey  string
+	AIModel   string
+	// AIMaxTokens: model dạng reasoning tiêu token cho cả phần suy luận, nên cần
+	// nới rộng hơn. 0 nghĩa là để gói llm dùng mặc định của nó.
+	AIMaxTokens int
+	// AIBatchSize là số domain hỏi trong một lượt gọi.
+	AIBatchSize int
+	// AIHistoryRetainDays là thời gian giữ nhật ký lượt gọi.
+	AIHistoryRetainDays int
+
 	SessionTTL   time.Duration
 	AutoMigrate  bool
 	LogLevel     string
@@ -57,13 +83,19 @@ type Config struct {
 // Load đọc cấu hình, áp mặc định và kiểm tra tính hợp lệ.
 func Load() (Config, error) {
 	c := Config{
-		DBPath:      env("DNSGUARD_DB_PATH", "/var/lib/dnsguard/dnsguard.db"),
-		Listen:      env("DNSGUARD_LISTEN", ":8080"),
-		TZSPListen:  env("DNSGUARD_TZSP_LISTEN", ":37008"),
-		ListsDir:    env("DNSGUARD_LISTS_DIR", "/var/lib/dnsguard/lists"),
-		IP2ASNPath:  env("DNSGUARD_IP2ASN_PATH", "/var/lib/dnsguard/ip2asn.tsv.gz"),
-		TrancoPath:  env("DNSGUARD_TRANCO_PATH", "/var/lib/dnsguard/tranco.csv.zip"),
-		QuerylogDir: env("DNSGUARD_QUERYLOG_DIR", ""),
+		DBPath:       env("DNSGUARD_DB_PATH", "/var/lib/dnsguard/dnsguard.db"),
+		Listen:       env("DNSGUARD_LISTEN", ":8080"),
+		TZSPListen:   env("DNSGUARD_TZSP_LISTEN", ":37008"),
+		ListsDir:     env("DNSGUARD_LISTS_DIR", "/var/lib/dnsguard/lists"),
+		IP2ASNPath:   env("DNSGUARD_IP2ASN_PATH", "/var/lib/dnsguard/ip2asn.tsv.gz"),
+		TrancoPath:   env("DNSGUARD_TRANCO_PATH", "/var/lib/dnsguard/tranco.csv.zip"),
+		IPThreatPath: env("DNSGUARD_IPTHREAT_PATH", "/var/lib/dnsguard/ipthreat.txt"),
+
+		PcapEnabled:    envBool("DNSGUARD_PCAP_ENABLED", false),
+		PcapDir:        env("DNSGUARD_PCAP_DIR", "/var/lib/dnsguard/pcap"),
+		PcapMaxFileMB:  envInt("DNSGUARD_PCAP_MAX_FILE_MB", 64),
+		PcapMaxTotalMB: envInt("DNSGUARD_PCAP_MAX_TOTAL_MB", 2048),
+		QuerylogDir:    env("DNSGUARD_QUERYLOG_DIR", ""),
 
 		LogRetentionDays:    envInt("DNSGUARD_LOG_RETENTION_DAYS", 90),
 		HourlyRetentionDays: envInt("DNSGUARD_HOURLY_RETENTION_DAYS", 400),
@@ -83,6 +115,14 @@ func Load() (Config, error) {
 		PublishSink:         env("DNSGUARD_PUBLISH_SINK", "0.0.0.0"),
 		ListsAllowCIDR:      envList("DNSGUARD_LISTS_ALLOW_CIDR"),
 
+		AIDBPath:            env("DNSGUARD_AI_DB_PATH", ""),
+		AIBaseURL:           env("DNSGUARD_AI_BASE_URL", "https://api.deepseek.com/v1"),
+		AIAPIKey:            env("DNSGUARD_AI_API_KEY", ""),
+		AIModel:             env("DNSGUARD_AI_MODEL", "deepseek-chat"),
+		AIMaxTokens:         envInt("DNSGUARD_AI_MAX_TOKENS", 0),
+		AIBatchSize:         envInt("DNSGUARD_AI_BATCH_SIZE", 40),
+		AIHistoryRetainDays: envInt("DNSGUARD_AI_HISTORY_RETAIN_DAYS", 90),
+
 		SessionTTL:   time.Duration(envInt("DNSGUARD_SESSION_TTL_HOURS", 168)) * time.Hour,
 		AutoMigrate:  envBool("DNSGUARD_AUTO_MIGRATE", true),
 		LogLevel:     env("DNSGUARD_LOG_LEVEL", "info"),
@@ -101,6 +141,9 @@ func Load() (Config, error) {
 	}
 	if c.EnrichConcurrency < 1 {
 		return c, fmt.Errorf("DNSGUARD_ENRICH_CONCURRENCY phải ≥ 1")
+	}
+	if c.AIBatchSize < 1 || c.AIBatchSize > 200 {
+		return c, fmt.Errorf("DNSGUARD_AI_BATCH_SIZE phải trong [1,200], nhận %d", c.AIBatchSize)
 	}
 	return c, nil
 }

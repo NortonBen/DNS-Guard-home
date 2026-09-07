@@ -76,15 +76,29 @@ Nhận luồng TZSP và biến thành sự kiện có cấu trúc.
 
 - Lắng nghe UDP trên cổng cấu hình được (mặc định 37008)
 - Bóc TZSP → Ethernet (kể cả thẻ VLAN và QinQ) → IPv4/IPv6 → UDP → DNS
-- Chỉ nhận gói có cổng đích 53 và cờ QR bằng 0; gói khác là câu trả lời của router,
-  mang IP nguồn của router chứ không phải của client
+- Nhận cả hai chiều, vì `filter-port=53` trên sniffer khớp cả hai:
+  - **cổng đích 53, cờ QR bằng 0** — truy vấn client gửi lên router. IP nguồn là
+    client thật, nên gói này thành `query_events`.
+  - **cổng nguồn 53, cờ QR bằng 1** — câu trả lời. IP nguồn là resolver chứ không
+    phải client, nên gói này chỉ đóng góp ánh xạ domain → IP vào `domain_ips`; quy
+    kết client lấy từ truy vấn tương ứng đã ghi trước đó.
 - Chỉ ghi nhận loại bản ghi `A`, `AAAA`, `HTTPS` — phần còn lại là nhiễu nền của
   mDNS và dịch vụ nội bộ
+- Trong phần trả lời chỉ lấy `A` và `AAAA`, và quy mọi địa chỉ về **tên trong phần
+  câu hỏi**: khi có chuỗi CNAME, bản ghi địa chỉ mang tên đích của chuỗi, nhưng thứ
+  client hỏi — và thứ nằm trong bảng `domains` — là tên ở phần câu hỏi
 - Ghi theo lô 1.000 bản ghi hoặc mỗi 2 giây, tùy cái nào đến trước
 - Cập nhật bảng tổng hợp `domain_hourly` trong cùng transaction
 
-**Hai goroutine tách biệt.** Một goroutine chỉ đọc socket và bóc gói; một goroutine
-chỉ gom lô và ghi CSDL, nối với nhau bằng một kênh có đệm. Tách ra vì việc ghi đĩa
+**Bóc tên trong phần trả lời không đi theo con trỏ nén.** Phần câu hỏi không dùng nén
+nên đọc thẳng; phần trả lời dùng nén rất nhiều, nhưng ở đó chỉ cần biết tên *kết thúc
+ở đâu* để đọc các trường phía sau, mà một con trỏ luôn là hai byte cuối của tên trên
+dây. Không có bước nhảy nào nghĩa là một gói dị dạng có con trỏ trỏ vòng lại chính nó
+cũng không treo được bộ nhận.
+
+**Ba goroutine tách biệt.** Một goroutine chỉ đọc socket và bóc gói; hai goroutine
+chỉ gom lô và ghi CSDL — một cho truy vấn, một cho lượt phân giải — mỗi bên nối bằng
+một kênh có đệm riêng, để bên chậm không chặn bên kia. Tách ra vì việc ghi đĩa
 chậm không được phép làm đầy bộ đệm nhận của nhân: datagram UDP mất là mất hẳn,
 không có cách nào lấy lại. Khi hàng đợi đầy, sự kiện bị bỏ và **được đếm lại** —
 con số đó hiện trên `/health` chứ không biến mất im lặng.
@@ -210,6 +224,24 @@ Hàng đợi job và bộ lập lịch, chạy trên chính CSDL.
 Job hỏng được thử lại với backoff lũy thừa (1, 2, 4 phút) cho tới khi hết số lần thử.
 Bộ lập lịch chỉ xếp hàng khi chưa có job cùng loại đang chờ — không có bước này, một
 job chậm hơn chu kỳ của nó sẽ tích tụ vô hạn.
+
+### `llm` · `mcp` · `ai` — *tuỳ chọn*
+
+Ba gói của tính năng hỏi AI, tách theo mức độ biết về nghiệp vụ:
+
+- **`llm`** chỉ biết giao thức Chat Completions kiểu OpenAI. Không biết gì về domain.
+  Nhà cung cấp nào nói được giao thức đó đều dùng được — DeepSeek, OpenAI, Ollama.
+- **`mcp`** là client Model Context Protocol tối giản: bắt tay, liệt kê công cụ, gọi
+  công cụ. JSON-RPC 2.0 trên HTTP.
+- **`ai`** là tầng nghiệp vụ: gom domain thành lô để hỏi, đọc phản hồi CSV, chạy vòng
+  lặp gọi công cụ cho phần hỏi đáp, và giữ nhật ký ở **một file CSDL riêng**.
+
+`ai.Classifier` cài `enrich.BatchEnricher` nên nó nằm trong registry cùng các nguồn
+làm giàu khác và thừa hưởng nguyên giới hạn tốc độ cùng circuit breaker ở đó. Chỉ đúng
+một thứ của AI đi vào CSDL chính: dòng `domain_facts(source='ai')`.
+
+Cả cụm là tuỳ chọn: không cấu hình model nào thì nó tự tắt và mọi thứ khác không đổi.
+Xem [09](09-ai.md).
 
 ### `api`
 
@@ -396,13 +428,17 @@ dnsguard/
 │   ├── store/             toàn bộ truy cập CSDL
 │   │   └── migrations/    *.sql nhúng vào binary
 │   ├── ingest/            bộ nhận TZSP và bộ bóc gói
-│   ├── enrich/            dns · asn · cert · rdap · rank
+│   ├── enrich/            dns · asn · cert · rdap · rank · http · vt · ai
 │   ├── classify/          thuần túy, không I/O
 │   ├── graph/             bốn loại cạnh quan hệ
 │   ├── catalog/           đồng bộ blocklist công khai
 │   ├── publish/           render danh sách, ghi nguyên tử
 │   ├── auth/              argon2id, phiên, CSRF
 │   ├── events/            bus sự kiện cho SSE
+│   ├── llm/               giao thức Chat Completions, không biết nghiệp vụ
+│   ├── mcp/               client Model Context Protocol
+│   ├── ai/                hỏi model theo lô, hỏi đáp, công cụ, skill
+│   │   └── migrations/    lược đồ của CSDL nhật ký AI (file riêng)
 │   ├── worker/            hàng đợi job và bộ lập lịch
 │   ├── api/               HTTP handler và middleware
 │   └── web/               nhúng giao diện đã biên dịch
