@@ -8,6 +8,8 @@ import {
 
 import { api, query } from './client';
 import type {
+  IPInvestigation,
+  ThreatList,
   AddDomainResponse,
   CategoryDetail,
   Domain,
@@ -827,5 +829,27 @@ export function useDeleteMCPServer() {
       client.invalidateQueries({ queryKey: qk.aiMCPServers() });
       client.invalidateQueries({ queryKey: qk.aiTools() });
     },
+  });
+}
+
+/** Danh sách cảnh báo: domain đã phân giải tới hạ tầng độc hại. */
+export function useThreats() {
+  return useQuery({
+    queryKey: ['threats'],
+    queryFn: () => api<ThreatList>('/threats'),
+  });
+}
+
+/**
+ * Điều tra ngược từ một địa chỉ.
+ *
+ * Chỉ chạy khi có địa chỉ: màn điều tra mở ra ở trạng thái rỗng và chỉ hỏi máy chủ
+ * sau khi người dùng nhập xong.
+ */
+export function useIPInvestigation(addr: string) {
+  return useQuery({
+    queryKey: ['investigate-ip', addr],
+    queryFn: () => api<IPInvestigation>(`/investigate/ip${query({ addr })}`),
+    enabled: addr.trim().length > 0,
   });
 }

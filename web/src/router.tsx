@@ -110,6 +110,12 @@ const lookupRoute = createRoute({
   component: lazyRouteComponent(() => import('@/routes/lookup'), 'LookupScreen'),
 });
 
+const ipForensicsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/ip-forensics',
+  component: lazyRouteComponent(() => import('@/routes/ip-forensics'), 'IPForensicsScreen'),
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
@@ -125,6 +131,7 @@ const routeTree = rootRoute.addChildren([
   settingsRoute,
   lookupRoute,
   aiRoute,
+  ipForensicsRoute,
 ]);
 
 export const router = createRouter({ routeTree, defaultPreload: 'intent' });

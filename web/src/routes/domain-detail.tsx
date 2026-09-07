@@ -23,6 +23,7 @@ import {
   StatusBadge,
 } from '@/components/ui/primitives';
 import { formatDateTime, formatNumber, formatRelative, formatScore } from '@/lib/format';
+import type { DomainIP } from '@/api/types';
 
 // Đồ thị chỉ nạp khi mở trang chi tiết, không nằm trong bundle chung.
 const RelationGraphView = lazy(() =>
@@ -63,7 +64,7 @@ export function DomainDetailScreen() {
   if (detail.isError) return <ErrorState error={detail.error} />;
   if (!detail.data) return <EmptyState>Không tìm thấy domain</EmptyState>;
 
-  const { domain, facts, siblings, history, public_lists: publicLists } = detail.data;
+  const { domain, facts, siblings, history, public_lists: publicLists, ips } = detail.data;
 
   function act(action: 'block' | 'allow' | 'ignore') {
     const reason = window.prompt(
@@ -230,6 +231,10 @@ export function DomainDetailScreen() {
         </Card>
       </div>
 
+      <Card title={`Địa chỉ quan sát trên dây (${ips.length})`}>
+        <ObservedIPs ips={ips} />
+      </Card>
+
       <Card title="Chuỗi CNAME">
         <CnameChain domain={domain.name} chain={facts.dns?.cname_chain} />
       </Card>
@@ -333,6 +338,66 @@ export function DomainDetailScreen() {
       <p className="text-xs text-slate-500 dark:text-slate-400">
         Phân loại hiện có: {categories.data?.items.map((c) => c.label_vi).join(', ') ?? '—'}
       </p>
+    </div>
+  );
+}
+
+/**
+ * Địa chỉ mà domain này đã trỏ tới, lấy từ bản ghi trả lời DNS bắt được trên dây.
+ *
+ * Khác thẻ "Hạ tầng" phía trên: chỗ đó là kết quả DNSGuard tự phân giải lúc làm giàu,
+ * còn đây là câu trả lời thiết bị trong mạng thật sự nhận được. Hai chỗ lệch nhau là
+ * bình thường với CDN, và chính khoảng lệch đó mới đáng để ý.
+ */
+function ObservedIPs({ ips }: { ips: DomainIP[] }) {
+  if (ips.length === 0) {
+    return (
+      <EmptyState>
+        Chưa bắt được bản ghi trả lời nào cho domain này. Nếu toàn bộ hệ thống không có địa chỉ nào,
+        kiểm tra <code>filter-port=53</code> trên sniffer của router.
+      </EmptyState>
+    );
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm">
+        <thead className="text-left text-xs uppercase text-slate-500">
+          <tr>
+            <th className="py-1 pr-3">Địa chỉ</th>
+            <th className="py-1 pr-3">Mạng</th>
+            <th className="py-1 pr-3">TTL</th>
+            <th className="py-1 pr-3">Số lần</th>
+            <th className="py-1">Thấy gần nhất</th>
+          </tr>
+        </thead>
+        <tbody>
+          {ips.map((ip) => (
+            <tr key={ip.ip} className="border-t border-slate-100 dark:border-slate-800">
+              <td className="py-1.5 pr-3 font-mono text-xs">
+                {ip.ip}
+                {ip.threat && (
+                  <span
+                    className="ml-2 rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-800 dark:bg-red-900 dark:text-red-200"
+                    title={`Khớp dải ${ip.threat} trong danh sách hạ tầng độc hại`}
+                  >
+                    độc hại
+                  </span>
+                )}
+              </td>
+              <td className="py-1.5 pr-3 text-xs">
+                {ip.asn ? `AS${ip.asn} ` : ''}
+                {[ip.org, ip.country].filter(Boolean).join(' · ') || '—'}
+              </td>
+              <td className="py-1.5 pr-3 text-xs">{ip.ttl}s</td>
+              <td className="py-1.5 pr-3 text-xs">{formatNumber(ip.hits)}</td>
+              <td className="py-1.5 text-xs text-slate-500" title={formatDateTime(ip.last_seen)}>
+                {formatRelative(ip.last_seen)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

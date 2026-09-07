@@ -399,3 +399,87 @@ func (s *Store) ThreatMatches(ctx context.Context, beaconMaxCV float64, limit in
 	}
 	return out, rows.Err()
 }
+
+// ExportQuery là một dòng truy vấn trong hồ sơ điều tra.
+type ExportQuery struct {
+	Client string `json:"client"`
+	Domain string `json:"domain"`
+	QType  int64  `json:"qtype"`
+	At     string `json:"at"`
+}
+
+// ExportResolution là một ánh xạ domain → địa chỉ trong hồ sơ điều tra.
+type ExportResolution struct {
+	Domain    string `json:"domain"`
+	IP        string `json:"ip"`
+	FirstSeen string `json:"first_seen"`
+	LastSeen  string `json:"last_seen"`
+	Hits      int64  `json:"hits"`
+	TTL       int64  `json:"ttl"`
+	ASN       int    `json:"asn,omitempty"`
+	Country   string `json:"country,omitempty"`
+	Org       string `json:"org,omitempty"`
+	Threat    string `json:"threat,omitempty"`
+}
+
+// ExportQueries duyệt các truy vấn trong khoảng thời gian, cũ nhất trước.
+//
+// Gọi lại theo từng dòng thay vì trả về một lát cắt: một khoảng vài tháng có thể là
+// hàng chục triệu dòng, và nạp hết vào bộ nhớ trên một máy Pi sẽ giết tiến trình.
+// Người gọi ghi thẳng từng dòng ra luồng đầu ra.
+func (s *Store) ExportQueries(ctx context.Context, from, to string, fn func(ExportQuery) error) error {
+	rows, err := s.r.QueryContext(ctx, `
+		SELECT c.ip, d.name, e.qtype, e.occurred_at
+		FROM query_events e
+		JOIN domains d ON d.id = e.domain_id
+		JOIN clients c ON c.id = e.client_id
+		WHERE e.occurred_at >= ? AND e.occurred_at <= ?
+		ORDER BY e.occurred_at`, from, to)
+	if err != nil {
+		return fmt.Errorf("export queries: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var q ExportQuery
+		if err := rows.Scan(&q.Client, &q.Domain, &q.QType, &q.At); err != nil {
+			return fmt.Errorf("scan export query: %w", err)
+		}
+		if err := fn(q); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+// ExportResolutions duyệt các ánh xạ domain → địa chỉ **còn hiệu lực trong khoảng**.
+//
+// Điều kiện là hai khoảng giao nhau, không phải ánh xạ nằm gọn bên trong: một địa chỉ
+// quan sát lần đầu từ tháng trước và vẫn còn dùng trong khoảng điều tra là bằng chứng
+// liên quan, và lọc theo first_seen sẽ đánh rơi nó.
+func (s *Store) ExportResolutions(ctx context.Context, from, to string, fn func(ExportResolution) error) error {
+	rows, err := s.r.QueryContext(ctx, `
+		SELECT d.name, i.ip, i.first_seen, i.last_seen, i.hits, i.ttl,
+		       coalesce(i.asn, 0), coalesce(i.country, ''), coalesce(i.org, ''),
+		       coalesce(i.threat, '')
+		FROM domain_ips i
+		JOIN domains d ON d.id = i.domain_id
+		WHERE i.last_seen >= ? AND i.first_seen <= ?
+		ORDER BY i.last_seen`, from, to)
+	if err != nil {
+		return fmt.Errorf("export resolutions: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var r ExportResolution
+		if err := rows.Scan(&r.Domain, &r.IP, &r.FirstSeen, &r.LastSeen, &r.Hits, &r.TTL,
+			&r.ASN, &r.Country, &r.Org, &r.Threat); err != nil {
+			return fmt.Errorf("scan export resolution: %w", err)
+		}
+		if err := fn(r); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}

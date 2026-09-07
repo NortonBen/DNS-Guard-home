@@ -260,6 +260,13 @@ Màn hình quan trọng nhất về mặt sản phẩm (US-2).
 **Tải theo lớp:** thông tin cơ bản và tín hiệu tải trước và render ngay; đồ thị và
 timeline tải sau, có skeleton. Không để cả trang chờ phần chậm nhất.
 
+**Thẻ "Địa chỉ quan sát trên dây".** Địa chỉ lấy từ bản ghi trả lời DNS bắt được, kèm
+mạng, TTL nhỏ nhất từng thấy, và nhãn đỏ khi khớp danh sách hạ tầng độc hại.
+
+Đừng nhầm với dòng IP ở thẻ "Hạ tầng": chỗ đó là kết quả DNSGuard tự phân giải lúc làm
+giàu, còn đây là câu trả lời thiết bị trong mạng thật sự nhận được. Hai chỗ lệch nhau
+là bình thường với CDN, và chính khoảng lệch đó mới đáng để ý.
+
 ### 4.5 Phân loại `/categories`
 
 Danh sách phân loại, sửa được ngưỡng điểm, bật/tắt, đổi màu. Mỗi dòng hiện số domain
@@ -361,7 +368,32 @@ Hai đường bộ nhớ tách nhau ra là dấu hiệu đáng chú ý: heap ph�
 Khi dữ liệu không phủ hết khoảng đã chọn thì nói ra, vì một biểu đồ ngắn hơn mong đợi
 trông giống hệt mất dữ liệu.
 
-### 4.11 Cài đặt `/settings`
+### 4.11 Điều tra IP `/ip-forensics`
+
+Ba việc luôn đi cùng nhau trong một vụ điều tra, gộp vào một màn để không phải chép
+địa chỉ qua lại giữa các trang:
+
+1. **Cảnh báo hạ tầng độc hại** — domain đã phân giải tới địa chỉ nằm trong danh sách.
+   Mỗi dòng có dải đã khớp, vị trí mạng, và cờ *nhịp đều* lấy từ tín hiệu beacon sẵn
+   có. Bấm vào địa chỉ để chuyển thẳng xuống ô tra ngược.
+2. **Tra ngược một địa chỉ** — địa chỉ này phục vụ những domain nào, và thiết bị nào
+   đã phân giải chúng trong khoảng ánh xạ còn hiệu lực.
+3. **Xuất hồ sơ điều tra** — tải `.zip` cho một khoảng ngày.
+
+Danh sách cảnh báo rỗng có **hai nguyên nhân trái ngược nhau**: không có gì đáng báo,
+hoặc chưa tải danh sách về nên không đối chiếu được. Màn này phân biệt hai trường hợp
+đó bằng `list_loaded`; gộp chúng thành một dòng "không có cảnh báo" sẽ khiến người vận
+hành yên tâm nhầm.
+
+Giới hạn của dữ liệu nằm ngay dưới kết quả, không giấu trong tài liệu: đây là chỗ dễ
+kết luận quá tay nhất. Một lượt phân giải không chứng minh có kết nối thật, và thiết bị
+dùng DoH/DoT không xuất hiện ở đây chút nào.
+
+Nút tải hồ sơ là thẻ `<a download>` chứ không phải `fetch` rồi dựng blob: hồ sơ sinh
+theo luồng và có thể lên tới hàng trăm megabyte, mà dựng blob sẽ giữ toàn bộ trong bộ
+nhớ trình duyệt trước khi lưu được dòng nào.
+
+### 4.12 Cài đặt `/settings`
 
 Xếp theo mức nguy hiểm giảm dần: danh sách bảo vệ, vòng đời, phân tích ngoài (gồm
 công tắc HTTP và khóa API VirusTotal), địa chỉ xuất bản, dữ liệu tra cứu, thông tin
@@ -375,7 +407,7 @@ chính máy truy vấn), hoặc một địa chỉ tự nhập. Khác biệt kh�
 `127.0.0.1` khiến máy khách tự gọi về chính nó và ngồi chờ hết thời gian nếu không có
 gì lắng nghe, thấy rõ nhất trên điện thoại nơi ứng dụng treo thay vì báo lỗi ngay.
 
-### 4.12 Hỏi AI `/ai`
+### 4.13 Hỏi AI `/ai`
 
 Năm thẻ trên một màn: **Hỏi AI**, **Lịch sử**, **Nhà cung cấp**, **Skill**,
 **Công cụ & MCP**. Ba thẻ cuối chỉ hiện với quản trị viên.

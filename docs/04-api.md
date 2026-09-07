@@ -277,6 +277,40 @@ tới địa chỉ này, lúc mấy giờ"*. Nó **không** chứng minh có k�
 đó: luồng mirror chỉ mang DNS (`filter-port=53`), nên phần kết nối nằm ngoài tầm quan
 sát. Client dùng DoH/DoT không xuất hiện ở đây chút nào.
 
+### `GET /forensics/export?from=…&to=…`
+
+Đóng gói log điều tra của một khoảng thời gian thành file `.zip`. Hai mốc thời gian
+là RFC3339 và bắt buộc; khoảng tối đa **400 ngày**.
+
+```
+queries.ndjson       mỗi dòng: {client, domain, qtype, at}
+resolutions.ndjson   mỗi dòng: {domain, ip, first_seen, last_seen, hits, ttl, asn, country, org, threat}
+manifest.json        siêu dữ liệu vụ việc + sha256 của từng file
+```
+
+```json
+{
+  "tool": "DNSGuard", "version": "1.0.0",
+  "generated_at": "2026-09-07T17:36:19Z", "generated_by": "admin",
+  "from": "2026-09-06T17:36:19Z", "to": "2026-09-07T18:36:19Z",
+  "files": [
+    { "name": "queries.ndjson", "sha256": "a5ccc336…", "bytes": 1395, "rows": 15 }
+  ],
+  "limitations": ["…"]
+}
+```
+
+`limitations` đi **cùng dữ liệu** chứ không nằm trong tài liệu riêng: người mở hồ sơ
+này sáu tháng sau sẽ không có tài liệu nào trong tay, và một hồ sơ không nói rõ nó
+*không* chứng minh điều gì là một hồ sơ dễ bị đọc sai.
+
+Hồ sơ được sinh theo luồng, và băm tính **trong lúc ghi**, nên `manifest.json` luôn là
+file cuối cùng trong zip. Đó cũng là lý do hỏng giữa chừng vẫn an toàn: không có mục
+lục trung tâm hợp lệ, mọi công cụ giải nén đều báo hỏng thay vì đưa ra một hồ sơ thiếu
+dữ liệu mà trông như đầy đủ.
+
+Tham số sai trả **400**; khoảng không hợp lệ hoặc quá rộng trả **422**.
+
 ### `POST /domains/:id/decision`
 
 Thay đổi trạng thái. Đây là endpoint quan trọng nhất của hệ thống.

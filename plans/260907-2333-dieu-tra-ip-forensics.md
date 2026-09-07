@@ -200,9 +200,44 @@ hoạt động — đã có test giữ điều này.
 File sinh ra được kiểm chứng bằng `tcpdump` thật, bóc tới tận tầng DNS, không chỉ đối
 chiếu byte với hiểu biết của chính package.
 
-**Chưa làm:** xuất hồ sơ vụ việc kèm manifest sha256.
+### Xuất hồ sơ — xong
+
+| Thay đổi | Nơi |
+|---|---|
+| `ExportQueries`, `ExportResolutions` theo luồng | `store/resolutions.go` |
+| `GET /forensics/export` → zip + manifest sha256 | `api/handlers_forensics.go` |
+
+Duyệt theo callback từng dòng chứ không trả về lát cắt: một khoảng vài tháng có thể là
+hàng chục triệu dòng, và nạp hết vào bộ nhớ trên máy Pi sẽ giết tiến trình.
+
+Băm tính **trong lúc ghi**, nên manifest là file cuối cùng trong zip. Đó cũng là lý do
+hỏng giữa chừng vẫn an toàn: không có mục lục trung tâm hợp lệ, mọi công cụ giải nén
+đều báo hỏng thay vì đưa ra hồ sơ thiếu dữ liệu mà trông như đầy đủ.
+
+`limitations` nằm trong chính manifest: người mở hồ sơ sáu tháng sau không có tài liệu
+nào trong tay.
+
+### Giao diện — xong
+
+| Thay đổi | Nơi |
+|---|---|
+| Màn `/ip-forensics`: cảnh báo, tra ngược, xuất hồ sơ | `web/src/routes/ip-forensics.tsx` |
+| Thẻ "Địa chỉ quan sát trên dây" | `web/src/routes/domain-detail.tsx` |
+| Kiểu và hook | `web/src/api/types.ts`, `web/src/api/hooks.ts` |
+
+### Kiểm chứng trên máy chủ thật
+
+Chạy binary thật, bắn 15 truy vấn + 15 câu trả lời TZSP vào cổng:
+
+- `resolutions_accepted` 15, `decode_errors` 0 — tuyến bắt câu trả lời chạy.
+- `tcpdump` đọc file pcap, bóc đúng cả hai chiều, đủ 30 gói.
+- Đối chiếu đe dọa: `/32` khớp địa chỉ đơn, `/16` khớp dải, `8.8.8.8` sạch.
+- Hồ sơ xuất ra: zip hợp lệ, sha256 trong manifest khớp nội dung thật.
+- Giao diện: cảnh báo, tra ngược, và thẻ địa chỉ đều hiện đúng.
 
 ### Còn lại
 
-- Xuất hồ sơ vụ việc kèm manifest sha256 (phần cuối giai đoạn 4).
-- **Giao diện** — chưa có màn hình nào cho dữ liệu mới; hiện chỉ tới được qua API.
+Không còn hạng mục nào của kế hoạch này. Những thứ nằm ngoài phạm vi từ đầu:
+
+- Bằng chứng **kết nối** thật — cần mirror thêm lưu lượng trên MikroTik.
+- Client dùng DoH/DoT — không vá được ở tầng này.

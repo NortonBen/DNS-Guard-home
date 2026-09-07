@@ -42,6 +42,7 @@ const navigation: NavGroup[] = [
       { to: '/domains', label: 'Danh sách domain' },
       { to: '/graph', label: 'Bản đồ quan hệ' },
       { to: '/lookup', label: 'Tra cứu nhanh' },
+      { to: '/ip-forensics', label: 'Điều tra IP' },
       { to: '/ai', label: 'Hỏi AI' },
     ],
   },

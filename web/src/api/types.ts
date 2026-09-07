@@ -68,6 +68,25 @@ export interface DomainFacts {
   rank?: { tranco?: number; error?: string };
 }
 
+/**
+ * Địa chỉ quan sát được trên dây từ bản ghi trả lời DNS.
+ *
+ * Khác `facts.asn`: chỗ đó là kết quả DNSGuard tự phân giải lúc làm giàu, còn đây là
+ * câu trả lời thiết bị trong mạng thật sự nhận được.
+ */
+export interface DomainIP {
+  ip: string;
+  first_seen: string;
+  last_seen: string;
+  hits: number;
+  ttl: number;
+  asn?: number;
+  country?: string;
+  org?: string;
+  /** Dải trong danh sách hạ tầng độc hại đã khớp. Vắng mặt nghĩa là sạch. */
+  threat?: string;
+}
+
 export interface DomainDetail {
   domain: Domain;
   facts: DomainFacts;
@@ -76,6 +95,44 @@ export interface DomainDetail {
   public_lists: { source_id: number; name: string; category: string }[];
   protected: boolean;
   protect_rule: string;
+  ips: DomainIP[];
+}
+
+/** Một domain đã phân giải tới địa chỉ nằm trong danh sách hạ tầng độc hại. */
+export interface ThreatMatch {
+  domain_id: number;
+  name: string;
+  status: DomainStatus;
+  ip: string;
+  threat: string;
+  last_seen: string;
+  hits: number;
+  country?: string;
+  org?: string;
+  /** Domain được hỏi theo nhịp đều bất thường — dấu hiệu kênh điều khiển tự động. */
+  beacon: boolean;
+}
+
+export interface ThreatList {
+  matches: ThreatMatch[];
+  /**
+   * `false` nghĩa là chưa tải danh sách về, nên `matches` rỗng vì không đối chiếu
+   * được — không phải vì không có gì đáng báo. Hai trường hợp trái ngược nhau.
+   */
+  list_loaded: boolean;
+}
+
+export interface IPInvestigation {
+  ip: string;
+  domains: {
+    domain_id: number;
+    name: string;
+    status: DomainStatus;
+    first_seen: string;
+    last_seen: string;
+    hits: number;
+  }[];
+  accesses: { client: string; domain: string; occurred_at: string }[];
 }
 
 export interface GraphNode {

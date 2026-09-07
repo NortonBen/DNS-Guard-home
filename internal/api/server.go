@@ -125,6 +125,7 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/domains/{id}/timeline", s.handleDomainTimeline)
 			r.Get("/investigate/ip", s.handleInvestigateIP)
 			r.Get("/threats", s.handleListThreats)
+			r.Get("/forensics/export", s.handleForensicsExport)
 			r.Get("/categories", s.handleListCategories)
 			r.Get("/sources", s.handleListSources)
 			r.Get("/sources/overlap", s.handleSourceOverlap)
