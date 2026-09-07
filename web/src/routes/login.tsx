@@ -3,6 +3,7 @@ import { useNavigate } from '@tanstack/react-router';
 
 import { setCsrfToken } from '@/api/client';
 import { useLogin } from '@/api/hooks';
+import { Logo } from '@/components/ui/logo';
 import { Button, ErrorState } from '@/components/ui/primitives';
 
 export function LoginScreen() {
@@ -31,8 +32,8 @@ export function LoginScreen() {
         className="w-full max-w-sm space-y-4 rounded-lg bg-white p-6 ring-1 ring-slate-200 dark:bg-slate-900 dark:ring-slate-800"
       >
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">
-            DNS<span className="text-sky-600">Guard</span>
+          <h1>
+            <Logo className="text-xl" />
           </h1>
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
             Quản trị blocklist DNS lấy domain làm trung tâm

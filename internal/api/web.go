@@ -55,9 +55,15 @@ func (s *Server) handleWeb(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-cache")
 	}
 
+	// Đặt kiểu nội dung trước khi phục vụ: bảng mặc định của Go không biết
+	// `.webmanifest`, mà trình duyệt bỏ qua manifest nào không về đúng kiểu — biểu
+	// tượng ứng dụng khi đó im lặng không hiện.
+	if ct := contentTypeOf(name); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+
 	seeker, ok := file.(io.ReadSeeker)
 	if !ok {
-		w.Header().Set("Content-Type", contentTypeOf(name))
 		io.Copy(w, file)
 		return
 	}
@@ -76,8 +82,15 @@ func contentTypeOf(name string) string {
 		return "image/svg+xml"
 	case ".json":
 		return "application/json"
+	case ".png":
+		return "image/png"
+	case ".ico":
+		return "image/x-icon"
+	case ".webmanifest":
+		return "application/manifest+json"
 	default:
-		return "application/octet-stream"
+		// Không đoán: để http.ServeContent tự nhận dạng theo nội dung.
+		return ""
 	}
 }
 

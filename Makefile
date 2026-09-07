@@ -71,4 +71,5 @@ seed-traffic:    ## Gửi truy vấn DNS giả vào cổng TZSP để có dữ l
 	go run ./tools/seed-traffic
 
 clean:
-	rm -rf bin internal/web/assets/assets internal/web/assets/index.html
+	rm -rf bin
+	@find internal/web/assets -mindepth 1 ! -name .gitkeep -delete 2>/dev/null || true

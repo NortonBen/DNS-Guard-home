@@ -59,6 +59,7 @@ web/
 │   │   └── hooks.ts             toàn bộ hook TanStack Query
 │   ├── components/
 │   │   ├── ui/primitives.tsx    Button, Card, StatusBadge, Skeleton…
+│   │   ├── ui/logo.tsx          biểu tượng nội tuyến + chữ DNSGuard
 │   │   ├── layout/app-shell.tsx điều hướng, băng cảnh báo sức khỏe, chuyển sáng/tối
 │   │   ├── domain/
 │   │   │   ├── signal-badges.tsx
@@ -73,6 +74,11 @@ web/
 │   └── lib/
 │       ├── format.ts            số, ngày giờ, tên miền theo quy ước Việt Nam
 │       └── strings.ts           chuỗi giao diện gom một chỗ
+├── public/                      chép nguyên trạng vào bản build
+│   ├── favicon.svg  favicon.ico
+│   ├── apple-touch-icon.png  icon-192.png  icon-512.png
+│   ├── site.webmanifest
+│   └── brand/                   file gốc của bộ nhận diện
 ├── index.html
 ├── vite.config.ts               xuất vào ../internal/web/assets
 └── package.json
@@ -313,7 +319,57 @@ http://192.168.88.10:8080/lists/ads.txt
 Và một dòng nhắc: *"MikroTik kiểm tra cập nhật mỗi 4 giờ. Muốn áp dụng ngay, chạy
 `/ip dns adlist reload` trên router."*
 
-## 5. Hiển thị và ngôn ngữ
+## 5. Nhận diện
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="../web/public/brand/logo-dark.svg">
+    <img src="../web/public/brand/logo.svg" alt="DNSGuard" width="280">
+  </picture>
+</p>
+
+Biểu tượng là một chiếc khiên bọc lấy cây phân cấp ba nút. Khiên là phần *guard*; cây
+ba nút là phần *lấy domain làm trung tâm* — thứ phân biệt DNSGuard với một resolver.
+Không dùng hình ổ khóa hay dấu cấm: DNSGuard không chặn, nó phân loại và ra quyết định.
+
+Màu lấy thẳng từ thang màu giao diện, nên logo không cần bảng màu riêng:
+
+| Dùng ở | Màu |
+|---|---|
+| Chuyển sắc của khiên | `sky-400` → `sky-500` → `sky-700` |
+| Đồ thị bên trong khiên | trắng |
+| Chữ "DNS" | `slate-900`, nền tối dùng `slate-50` |
+| Chữ "Guard" | `sky-600`, nền tối dùng `sky-400` |
+
+Chữ "Guard" đổi sang `sky-400` ở chế độ tối vì `sky-600` trên nền `slate-900` chỉ đạt
+tương phản 3,5:1, dưới ngưỡng 4,5:1 của chính tài liệu này.
+
+### File
+
+| File | Dùng vào việc gì |
+|---|---|
+| `src/components/ui/logo.tsx` | biểu tượng vẽ nội tuyến trong giao diện — thanh bên, thanh trên cùng, màn hình đăng nhập |
+| `public/brand/logo-mark.svg` | biểu tượng đứng một mình |
+| `public/brand/logo.svg`, `logo-dark.svg` | biểu tượng kèm chữ, cho tài liệu và README |
+| `public/brand/app-icon.svg` | bản vuông tràn viền, nền đặc — file gốc của các PNG |
+| `public/favicon.svg` | favicon, nét đậm hơn để còn đọc được ở 16px |
+| `public/favicon.ico` | 16/32/48px, đỡ cho trình duyệt cũ chưa đọc favicon SVG |
+| `public/apple-touch-icon.png`, `icon-192.png`, `icon-512.png` | biểu tượng khi cài lên màn hình chính |
+| `public/site.webmanifest` | khai báo tên, màu và biểu tượng cho trình duyệt |
+
+Trong giao diện, biểu tượng vẽ nội tuyến chứ không nhúng `<img>`: không tốn thêm một
+lượt tải và nét vẽ luôn sắc ở mọi tỉ lệ màn hình. Đổi lại, hình nằm ở hai nơi — sửa
+`logo.tsx` thì phải sửa cả `public/`.
+
+Các file PNG sinh ra từ `app-icon.svg`, không sửa tay:
+
+```bash
+for s in 180:apple-touch-icon 192:icon-192 512:icon-512; do
+  rsvg-convert -w ${s%%:*} -h ${s%%:*} web/public/brand/app-icon.svg -o web/public/${s##*:}.png
+done
+```
+
+## 6. Hiển thị và ngôn ngữ
 
 - Giao diện tiếng Việt. Chuỗi tập trung ở `src/lib/strings.ts`, chuẩn bị sẵn cho i18n nhưng chưa cần thư viện i18n.
 - Thời gian hiển thị theo múi giờ trình duyệt; tooltip hiện UTC.
@@ -321,7 +377,7 @@ Và một dòng nhắc: *"MikroTik kiểm tra cập nhật mỗi 4 giờ. Muốn
 - Tên miền dùng font monospace ở mọi nơi — dễ so sánh trực quan và tránh nhầm ký tự giống nhau.
 - Chế độ tối theo `prefers-color-scheme`, có nút chuyển thủ công lưu trong `localStorage`.
 
-## 6. Tiếp cận
+## 7. Tiếp cận
 
 - Mọi hành động có phím tắt cũng phải có nút bấm được
 - Focus ring rõ ràng, không tắt outline
@@ -330,7 +386,7 @@ Và một dòng nhắc: *"MikroTik kiểm tra cập nhật mỗi 4 giờ. Muốn
 - Tương phản màu tối thiểu 4,5:1
 - Tôn trọng `prefers-reduced-motion`
 
-## 7. Hiệu năng
+## 8. Hiệu năng
 
 | Chỉ tiêu | Ngân sách |
 |---|---|

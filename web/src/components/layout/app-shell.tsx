@@ -3,6 +3,7 @@ import { Link, Outlet, useNavigate, useRouterState } from '@tanstack/react-route
 
 import { setCsrfToken, setUnauthenticatedHandler } from '@/api/client';
 import { useHealth, useLogout, useOverview, useSession } from '@/api/hooks';
+import { Logo } from '@/components/ui/logo';
 import { Button, Spinner, cx } from '@/components/ui/primitives';
 import { formatDuration, formatNumber } from '@/lib/format';
 import { useTheme } from '@/lib/theme';
@@ -151,8 +152,8 @@ function Sidebar({ role, username, pathname, open, onClose }: SidebarProps) {
       )}
     >
       <div className="flex items-center justify-between px-4 py-3">
-        <Link to="/" className="text-base font-semibold tracking-tight">
-          DNS<span className="text-sky-600">Guard</span>
+        <Link to="/" aria-label="DNSGuard — trang tổng quan">
+          <Logo className="text-base" />
         </Link>
         <Button variant="ghost" className="lg:hidden" onClick={onClose} aria-label="Đóng menu">
           ✕
@@ -239,9 +240,7 @@ function MobileHeader({ onOpenMenu }: { onOpenMenu: () => void }) {
       <Button variant="ghost" onClick={onOpenMenu} aria-label="Mở menu">
         ☰
       </Button>
-      <span className="text-base font-semibold tracking-tight">
-        DNS<span className="text-sky-600">Guard</span>
-      </span>
+      <Logo className="text-base" />
     </header>
   );
 }

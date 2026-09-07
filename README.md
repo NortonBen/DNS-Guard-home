@@ -1,4 +1,9 @@
-# DNSGuard
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="web/public/brand/logo-dark.svg">
+    <img src="web/public/brand/logo.svg" alt="DNSGuard" width="300">
+  </picture>
+</p>
 
 Hệ quản trị blocklist DNS lấy **domain** làm trung tâm, không phải resolver.
 
@@ -145,7 +150,7 @@ Chi tiết ở [docs/07-development.md](docs/07-development.md).
 | 02 | [Kiến trúc](docs/02-architecture.md) | dev, kiến trúc sư | Sơ đồ hệ thống, module backend, luồng dữ liệu, các quyết định kỹ thuật và lý do |
 | 03 | [Mô hình dữ liệu](docs/03-data-model.md) | dev backend | Lược đồ SQLite đầy đủ, index, migration, chính sách lưu trữ |
 | 04 | [Đặc tả API](docs/04-api.md) | dev cả hai phía | Toàn bộ endpoint REST, định dạng lỗi, phân trang, xác thực |
-| 05 | [Frontend](docs/05-frontend.md) | dev frontend | Cấu trúc thư mục, route, component, quản lý state, đặc tả từng màn hình |
+| 05 | [Frontend](docs/05-frontend.md) | dev frontend | Cấu trúc thư mục, route, component, quản lý state, nhận diện, đặc tả từng màn hình |
 | 06 | [Bộ phân loại](docs/06-classification.md) | dev backend | Taxonomy, tín hiệu, công thức chấm điểm, vòng đời domain, đánh giá chất lượng |
 | 07 | [Phát triển](docs/07-development.md) | dev | Dựng môi trường, quy ước code, kiểm thử, triển khai |
 | 08 | [Lộ trình](docs/08-roadmap.md) | tất cả | Trạng thái từng mốc và phạm vi còn lại |

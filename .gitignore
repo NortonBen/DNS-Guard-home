@@ -13,3 +13,5 @@ node_modules/
 *.db-shm
 .DS_Store
 .playwright-mcp
+*.tar
+*.tar.gz
