@@ -172,6 +172,23 @@ func buildEnrichers(cfg config.Config, log *slog.Logger) *enrich.Registry {
 	}
 	registry.Register(rank, 100, 100, true)
 
+	// Tải trang gốc của domain để phân tích header và HTML tĩnh. Mặc định tắt: đây là
+	// nguồn duy nhất gõ cửa trực tiếp máy chủ đích, nên người vận hành phải chủ động
+	// bật. Giới hạn 2 trang/giây để không tạo ra một đợt quét dễ nhận ra.
+	httpAnalysis := cfg.HTTPAnalysisEnabled && cfg.ExternalEnabled
+	registry.Register(enrich.NewHTTP(), 2, 4, httpAnalysis)
+	if cfg.HTTPAnalysisEnabled && !cfg.ExternalEnabled {
+		log.Warn("phân tích HTTP bị tắt vì DNSGUARD_EXTERNAL_ENABLED=false")
+	}
+
+	// VirusTotal: bậc miễn phí khoảng 4 lượt/phút, đặt 3 để chừa biên. Cổng lọc theo
+	// điểm ở tầng worker giữ lượng gọi ở mức vài chục mỗi ngày.
+	vt := enrich.NewVirusTotal(cfg.VTAPIKey)
+	registry.Register(vt, 3.0/60.0, 1, cfg.ExternalEnabled && vt.Configured())
+	if cfg.VTAPIKey == "" {
+		log.Info("chưa có khóa API VirusTotal, bỏ qua nguồn xác thực này")
+	}
+
 	return registry
 }
 

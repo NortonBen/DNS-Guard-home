@@ -260,3 +260,171 @@ func TestShannonEntropy(t *testing.T) {
 		}
 	}
 }
+
+// Bảng tín hiệu từ phân tích HTTP và VirusTotal.
+func TestScoreHTTPAndVirusTotal(t *testing.T) {
+	tests := []struct {
+		name      string
+		domain    Domain
+		facts     Facts
+		wantScore float64
+		wantCat   Category
+		wantKinds []string
+	}{
+		{
+			// Hostname trình duyệt đã phân giải nhưng không trả về trang nào: đó là
+			// điểm thu thập, không phải nơi người ta ghé thăm.
+			name:   "endpoint trả 204 là điểm thu thập",
+			domain: Domain{Name: "c1.thietbi.vn", ETLD1: "thietbi.vn"},
+			facts: Facts{HTTP: HTTPAnalysis{
+				Fetched: true, Status: 204, ContentType: "",
+			}},
+			wantScore: 4.0,
+			wantCat:   CategoryTelemetry,
+			wantKinds: []string{KindHTTPBeacon},
+		},
+		{
+			name:   "ảnh một điểm ảnh là điểm thu thập",
+			domain: Domain{Name: "px.dothi.vn", ETLD1: "dothi.vn"},
+			facts: Facts{HTTP: HTTPAnalysis{
+				Fetched: true, Status: 200, ContentType: "image/gif",
+				BodyLen: 43, IsPixel: true,
+			}},
+			wantScore: 4.0,
+			wantCat:   CategoryTelemetry,
+			wantKinds: []string{KindHTTPBeacon},
+		},
+		{
+			name:   "trang đỗ tên miền",
+			domain: Domain{Name: "tenmiencu.vn", ETLD1: "tenmiencu.vn"},
+			facts: Facts{HTTP: HTTPAnalysis{
+				Fetched: true, Status: 200, ContentType: "text/html", IsHTML: true,
+				Parking: "Sedo", Title: "tenmiencu.vn", TextLen: 400,
+			}},
+			wantScore: 3.0,
+			wantCat:   CategoryAds,
+			wantKinds: []string{KindHTTPParking},
+		},
+		{
+			// Phiên bản HTTP của CNAME cloaking: tên trông vô hại, đích thật ở nơi khác.
+			name:   "chuyển hướng tới hạ tầng adtech",
+			domain: Domain{Name: "go.trangweb.vn", ETLD1: "trangweb.vn"},
+			facts: Facts{HTTP: HTTPAnalysis{
+				Fetched: true, Status: 302, RedirectTo: "https://x.doubleclick.net/abc",
+			}},
+			wantScore: 4.0,
+			wantCat:   CategoryAds,
+			wantKinds: []string{KindHTTPRedirectAdtech},
+		},
+		{
+			name:   "header P3P cộng cookie xuyên trang",
+			domain: Domain{Name: "id.dothi.vn", ETLD1: "dothi.vn"},
+			facts: Facts{HTTP: HTTPAnalysis{
+				Fetched: true, Status: 200, ContentType: "text/html", IsHTML: true,
+				P3P: `CP="NOI DSP"`, TrackingCookie: "uid", CookieMaxDays: 730,
+				Title: "", TextLen: 50,
+			}},
+			// 2,5 p3p + 2,0 cookie + 1,0 trang trống
+			wantScore: 5.5,
+			wantCat:   CategoryContent,
+			wantKinds: []string{KindHTTPP3P, KindHTTPTrackingCookie, KindHTTPEmptyPage},
+		},
+		{
+			// Trang thật kéo điểm xuống — bảo vệ nội dung bình thường.
+			name:   "trang thật được giảm điểm",
+			domain: Domain{Name: "baomoi.vn", ETLD1: "baomoi.vn"},
+			facts: Facts{HTTP: HTTPAnalysis{
+				Fetched: true, Status: 200, ContentType: "text/html", IsHTML: true,
+				Title: "Tin tức 24h", TextLen: 9000,
+			}},
+			wantScore: -2.0,
+			wantCat:   CategoryContent,
+			wantKinds: []string{KindHTTPRealSite},
+		},
+		{
+			// Ba engine độc lập đồng ý mới là bằng chứng.
+			name:   "VirusTotal ba engine báo độc hại",
+			domain: Domain{Name: "verify.example.tk", ETLD1: "example.tk"},
+			facts: Facts{VT: VirusTotalResult{
+				Checked: true, Known: true, Malicious: 5, Harmless: 60,
+			}},
+			wantScore: 4.0,
+			wantCat:   CategoryMalware,
+			wantKinds: []string{KindVTMalicious},
+		},
+		{
+			// Một engine đơn lẻ là nhiễu nổi tiếng của VirusTotal, không tính.
+			name:   "VirusTotal một engine không đủ",
+			domain: Domain{Name: "trangweb.vn", ETLD1: "trangweb.vn"},
+			facts: Facts{VT: VirusTotalResult{
+				Checked: true, Known: true, Malicious: 1, Harmless: 30, Undetected: 20,
+			}},
+			wantScore: 0,
+			wantCat:   CategoryContent,
+			wantKinds: nil,
+		},
+		{
+			name:   "VirusTotal sạch cho điểm âm nhẹ",
+			domain: Domain{Name: "trangweb.vn", ETLD1: "trangweb.vn"},
+			facts: Facts{VT: VirusTotalResult{
+				Checked: true, Known: true, Malicious: 0, Harmless: 70, Undetected: 20,
+			}},
+			wantScore: -1.0,
+			wantCat:   CategoryContent,
+			wantKinds: []string{KindVTClean},
+		},
+		{
+			// Chưa tra thì không có tín hiệu nào, không phải suy đoán bất lợi.
+			name:      "chưa phân tích thì không sinh tín hiệu",
+			domain:    Domain{Name: "trangweb.vn", ETLD1: "trangweb.vn"},
+			facts:     Facts{},
+			wantScore: 0,
+			wantCat:   CategoryContent,
+			wantKinds: nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Score(tc.domain, tc.facts, DefaultWeights)
+
+			if got.Score != tc.wantScore {
+				t.Errorf("Score = %.2f, muốn %.2f (tín hiệu: %v)",
+					got.Score, tc.wantScore, got.SignalKinds())
+			}
+			if got.Category != tc.wantCat {
+				t.Errorf("Category = %q, muốn %q", got.Category, tc.wantCat)
+			}
+			if kinds := got.SignalKinds(); !slices.Equal(kinds, tc.wantKinds) {
+				t.Errorf("tín hiệu = %v, muốn %v", kinds, tc.wantKinds)
+			}
+		})
+	}
+}
+
+// Không tín hiệu HTTP nào một mình được phép đẩy domain vượt ngưỡng ads.
+//
+// Đây là ràng buộc thiết kế, không phải chi tiết cài đặt: phân tích HTTP là bằng
+// chứng bổ trợ cho tín hiệu hạ tầng, không thay thế. Một tín hiệu tự nó đủ để chặn
+// nghĩa là một lần đoán sai đủ để chặn nhầm.
+func TestHTTPSignalAloneNeverCrossesAdsThreshold(t *testing.T) {
+	const adsThreshold = 5.5
+
+	httpKinds := []string{
+		KindHTTPBeacon, KindHTTPRedirectAdtech, KindHTTPParking, KindHTTPP3P,
+		KindHTTPTrackingCookie, KindHTTPCORSWildcard, KindHTTPEmptyPage,
+	}
+	for _, kind := range httpKinds {
+		if w := DefaultWeights.Get(kind); w >= adsThreshold {
+			t.Errorf("%s có trọng số %.1f ≥ ngưỡng ads %.1f — một mình nó đủ để chặn",
+				kind, w, adsThreshold)
+		}
+	}
+
+	// VirusTotal là ngoại lệ có chủ ý: nó vượt ngưỡng malware (3,0) một mình, vì
+	// ngưỡng đó được đặt thấp chính vì loại bằng chứng này. Nhưng vẫn không được
+	// vượt ngưỡng ads.
+	if w := DefaultWeights.Get(KindVTMalicious); w >= adsThreshold {
+		t.Errorf("vt_malicious có trọng số %.1f ≥ ngưỡng ads %.1f", w, adsThreshold)
+	}
+}

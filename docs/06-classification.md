@@ -108,7 +108,62 @@ của từng client. Nếu nguồn log đến từ một resolver mà router for
 sẽ mang cùng một IP và cả ba tín hiệu trở nên vô nghĩa. Bộ thu thập hiện tại dùng
 mirror gói tin nên giữ được IP thật — xem [02 §5, ADR-5](02-architecture.md).
 
-### 2.4 Cấu trúc
+### 2.4 Phân tích HTTP — header và HTML tĩnh
+
+Tải trang gốc của domain và đọc header phản hồi cùng HTML **tĩnh**. Không chạy
+JavaScript, không tải tài nguyên con, không đi quá trang gốc.
+
+| `kind` | Trọng số | Điều kiện |
+|---|---|---|
+| `http_beacon` | +4,0 | Trả 204, hoặc ảnh một điểm ảnh, hoặc 200 thân rỗng không phải HTML |
+| `http_redirect_adtech` | +4,0 | Chuyển hướng tới host thuộc hạ tầng adtech đã biết |
+| `http_parking` | +3,0 | HTML khớp dấu vân tay nhà cung cấp trang đỗ tên miền |
+| `http_p3p` | +2,5 | Có header `P3P` |
+| `http_tracking_cookie` | +2,0 | `Set-Cookie` có `SameSite=None; Secure` và sống ≥ 90 ngày |
+| `http_cors_wildcard` | +1,0 | `Access-Control-Allow-Origin: *` và không phải HTML |
+| `http_empty_page` | +1,0 | 200 HTML nhưng dưới 200 ký tự và không có tiêu đề |
+| `http_real_site` | **−2,0** | 200 HTML, có tiêu đề, và từ 1500 ký tự trở lên |
+
+**Phân biệt quan trọng nhất của cả nhóm:** tín hiệu ở đây phải nói về *danh tính của
+domain*, không phải về *cách trang kiếm tiền*. Một tờ báo nhúng đầy mã quảng cáo vẫn
+là nội dung. Vì thế nhóm này **cố ý không** đếm số script bên thứ ba và không dò dấu
+vân tay `gtag(` / `fbq(` / `adsbygoogle` — chúng dính vào gần như mọi trang có quảng
+cáo, và dùng chúng là cách nhanh nhất phá vỡ mục tiêu precision.
+
+**Vì sao `http_beacon` mạnh.** Một hostname mà trình duyệt đã phân giải nhưng không
+trả về trang nào — chỉ một pixel, một 204, hoặc thân rỗng — thì không phải nơi người
+ta ghé thăm. Nó là điểm thu thập.
+
+**Vì sao `http_p3p` phân biệt tốt.** P3P là chuẩn đã chết. Ngày nay gần như chỉ còn
+các mạng quảng cáo giữ lại để lách chính sách cookie của trình duyệt cũ.
+
+**Không tín hiệu HTTP nào một mình vượt ngưỡng `ads` (5,5).** Đây là ràng buộc thiết
+kế có test riêng khóa lại: phân tích HTTP là bằng chứng bổ trợ cho tín hiệu hạ tầng,
+không thay thế. Một tín hiệu tự nó đủ để chặn nghĩa là một lần đoán sai đủ để chặn nhầm.
+
+**An toàn.** Trước khi tải, domain được phân giải và **từ chối nếu địa chỉ nằm trong
+dải nội bộ** (riêng tư, loopback, link-local, CGNAT, IPv4 bọc trong IPv6). Không có
+bước này, một domain độc hại chỉ cần trỏ bản ghi A về `192.168.88.1` là biến DNSGuard
+thành công cụ gọi vào trang quản trị của chính router trong mạng.
+
+### 2.5 VirusTotal — xác thực thêm
+
+| `kind` | Trọng số | Điều kiện |
+|---|---|---|
+| `vt_malicious` | +4,0 | Từ 3 engine trở lên báo độc hại |
+| `vt_clean` | −1,0 | Không engine nào báo độc hại và từ 60 engine đã chấm |
+
+Ngưỡng **ba engine** chứ không phải một: một engine đơn lẻ báo động là nhiễu nổi
+tiếng của VirusTotal.
+
++4,0 vượt ngưỡng `malware` (3,0), nghĩa là VirusTotal một mình đủ để đưa domain vào
+hàng chờ với nhãn malware. Đó là chủ ý — ngưỡng malware được đặt thấp chính vì loại
+bằng chứng này.
+
+**Chỉ tra cho domain đã đạt điểm ≥ 3,0** từ các tín hiệu khác. Bậc miễn phí khoảng
+500 lượt mỗi ngày, không đủ để tra mọi domain, và phần lớn domain cũng không cần.
+
+### 2.6 Cấu trúc
 
 | `kind` | Trọng số | Điều kiện |
 |---|---|---|

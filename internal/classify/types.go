@@ -79,6 +79,47 @@ type Facts struct {
 	// PublicListCategories là các phân loại của những nguồn đã chứa domain này,
 	// dùng cho các quy tắc gán nhãn malware / cryptomining / adult.
 	PublicListCategories []Category
+
+	// HTTP là kết quả phân tích header và HTML tĩnh của trang gốc. Chỉ có khi đã tải
+	// được; Fetched bằng false nghĩa là chưa tra hoặc tra hỏng.
+	HTTP HTTPAnalysis
+
+	// VT là kết quả tra VirusTotal. Chỉ tra cho domain đã đáng ngờ.
+	VT VirusTotalResult
+}
+
+// HTTPAnalysis là những gì đọc được từ một lần tải trang gốc.
+//
+// Thuần dữ liệu, không có phương thức và không biết gì về mạng: nhờ vậy hàm chấm
+// điểm vẫn thuần túy và test được bằng bảng.
+type HTTPAnalysis struct {
+	Fetched     bool
+	Status      int
+	ContentType string
+	BodyLen     int
+	IsHTML      bool
+	IsPixel     bool
+
+	RedirectTo string
+
+	P3P            string
+	CORS           string
+	TrackingCookie string
+	CookieMaxDays  int
+
+	Title   string
+	TextLen int
+	Parking string
+}
+
+// VirusTotalResult là kết luận tổng hợp của các engine trên VirusTotal.
+type VirusTotalResult struct {
+	Checked    bool
+	Known      bool
+	Malicious  int
+	Suspicious int
+	Harmless   int
+	Undetected int
 }
 
 // Signal là một mẩu bằng chứng đã kích hoạt, kèm trọng số tại thời điểm chấm điểm.

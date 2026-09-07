@@ -17,6 +17,8 @@ func Score(d Domain, f Facts, w Weights) Result {
 	signals = append(signals, lexicalSignals(d, w)...)
 	signals = append(signals, behaviorSignals(d, w)...)
 	signals = append(signals, structureSignals(d, f, w)...)
+	signals = append(signals, httpSignals(f, w)...)
+	signals = append(signals, virusTotalSignals(f, w)...)
 	signals = append(signals, negativeSignals(d, f, w, infra)...)
 
 	// Không chuẩn hóa điểm về [0,1]. Thang điểm thô dễ suy luận hơn: người vận hành
@@ -88,10 +90,22 @@ func categorize(d Domain, f Facts, signals []Signal) Category {
 		}
 	}
 
+	// 2b. Nhiều engine diệt mã độc đồng ý thì tin theo, ngang hàng với nguồn ngoài
+	//     đã phân loại sẵn.
+	if has(KindVTMalicious) {
+		return CategoryMalware
+	}
+
 	// 5. beacon là tín hiệu mạnh nhất — truy vấn đều đặn như máy là đặc trưng của
 	//    telemetry chứ không phải quảng cáo.
-	if strongest(signals) == KindBeacon {
+	switch strongest(signals) {
+	case KindBeacon, KindHTTPBeacon:
 		return CategoryTelemetry
+	}
+
+	// Trang đỗ tên miền và chuyển hướng tới adtech đều là hạ tầng quảng cáo.
+	if has(KindHTTPParking) || has(KindHTTPRedirectAdtech) {
+		return CategoryAds
 	}
 
 	// 6-7. Đích CNAME hoặc ASN đã biết mang phân loại của chính nó: một domain trỏ

@@ -157,9 +157,31 @@ TTL theo nguồn:
 | `cert` | 30 ngày | Chứng chỉ đổi hiếm |
 | `rdap` | 90 ngày | Ngày đăng ký không đổi |
 | `rank` | 7 ngày | Tranco cập nhật hằng ngày nhưng thứ hạng ổn định |
+| `http` | 14 ngày | Nội dung trang đổi chậm |
+| `vt` | 30 ngày | Kết luận của các engine đổi chậm |
 
-Khi `error` khác NULL, `expires_at` đặt ngắn hơn (15 phút) để thử lại sớm, nhưng job
-vẫn phải tôn trọng circuit breaker của nguồn đó.
+TTL còn phụ thuộc **kết cục**, không chỉ nguồn. Đây là phần trả lời yêu cầu "nhớ đã
+kiểm tra chưa, đừng kiểm tra lại ngay, bao lâu thì kiểm tra lại": bảng này lo phần
+"nhớ" — có dòng thì `EnrichCandidates` bỏ qua domain đó cho tới khi hết hạn, kể cả
+khi nó bị truy vấn liên tục — còn bảng dưới lo phần nhịp thử lại.
+
+| Nguồn | Kết cục | TTL | Lý do |
+|---|---|---|---|
+| `http` | trang đỗ tên miền | 30 ngày | Domain đã đỗ thì đỗ lâu |
+| `http` | DNS hỏng, từ chối kết nối | 7 ngày | Host chết thì cứ chết |
+| `http` | lỗi TLS | 7 ngày | Cấu hình hiếm khi đổi |
+| `http` | HTTP 4xx/5xx | 3 ngày | |
+| `http` | hết thời gian chờ | 2 ngày | Có thể chỉ là tạm thời |
+| `http` | địa chỉ nội bộ, bị từ chối | 90 ngày | Quyết định an toàn, không đổi theo thời gian |
+| `vt` | VirusTotal chưa biết domain | 7 ngày | Có thể được lập chỉ mục sau |
+| `vt` | hết quota | 1 giờ | Thử lại trong ngày |
+
+**Ghi cả khi thất bại là có chủ ý.** Dòng lỗi chính là thứ ngăn hệ thống thử lại ngay
+vòng sau; không có nó, một domain không kết nối được sẽ bị hỏi lại mỗi mười lăm phút
+mãi mãi.
+
+Kết cục không nằm trong bảng trên dùng TTL mặc định 15 phút. Job vẫn phải tôn trọng
+circuit breaker của nguồn đó: hết hạn cache không có nghĩa là được phép gọi ngay.
 
 ### `relations`
 

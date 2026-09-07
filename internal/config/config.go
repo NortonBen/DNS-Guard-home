@@ -32,8 +32,13 @@ type Config struct {
 
 	EnrichConcurrency int
 	ExternalEnabled   bool
-	PublishMinRatio   float64
-	ListsAllowCIDR    []string
+	// HTTPAnalysisEnabled bật việc tải trang gốc của domain để phân tích. Tách riêng
+	// khỏi ExternalEnabled vì nó lộ nhiều hơn: tra ASN chỉ đọc bảng cục bộ, còn tải
+	// trang là gõ cửa trực tiếp máy chủ đích.
+	HTTPAnalysisEnabled bool
+	VTAPIKey            string
+	PublishMinRatio     float64
+	ListsAllowCIDR      []string
 
 	SessionTTL   time.Duration
 	AutoMigrate  bool
@@ -61,8 +66,12 @@ func Load() (Config, error) {
 
 		EnrichConcurrency: envInt("DNSGUARD_ENRICH_CONCURRENCY", 4),
 		ExternalEnabled:   envBool("DNSGUARD_EXTERNAL_ENABLED", true),
-		PublishMinRatio:   envFloat("DNSGUARD_PUBLISH_MIN_RATIO", 0.5),
-		ListsAllowCIDR:    envList("DNSGUARD_LISTS_ALLOW_CIDR"),
+		// Mặc định tắt: người vận hành phải chủ động đồng ý việc máy chủ tự đi gõ cửa
+		// các domain thấy trong mạng.
+		HTTPAnalysisEnabled: envBool("DNSGUARD_HTTP_ANALYSIS_ENABLED", false),
+		VTAPIKey:            env("DNSGUARD_VT_API_KEY", ""),
+		PublishMinRatio:     envFloat("DNSGUARD_PUBLISH_MIN_RATIO", 0.5),
+		ListsAllowCIDR:      envList("DNSGUARD_LISTS_ALLOW_CIDR"),
 
 		SessionTTL:   time.Duration(envInt("DNSGUARD_SESSION_TTL_HOURS", 168)) * time.Hour,
 		AutoMigrate:  envBool("DNSGUARD_AUTO_MIGRATE", true),

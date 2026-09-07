@@ -29,7 +29,7 @@ dịch vụ riêng.
 flowchart TB
     subgraph BIN["Một binary Go"]
         subgraph FE["Giao diện nhúng sẵn"]
-            UI[React 19 + TypeScript<br/>9 màn hình]
+            UI[React 19 + TypeScript<br/>10 màn hình]
         end
 
         API[HTTP API · chi]
@@ -109,7 +109,17 @@ type Enricher interface {
 
 Các implementation: `DNSEnricher` (chuỗi CNAME, A/AAAA), `ASNEnricher` (bảng iptoasn
 cục bộ), `CertEnricher` (crt.sh), `RDAPEnricher` (tuổi domain), `RankEnricher`
-(Tranco).
+(Tranco), `HTTPEnricher` (header và HTML tĩnh của trang gốc), `VTEnricher`
+(VirusTotal).
+
+Hai nguồn cuối khác các nguồn còn lại ở chỗ chúng chạm trực tiếp tới máy chủ đích
+hoặc tiêu quota có hạn, nên đi qua một cổng lọc hẹp hơn hẳn ở tầng worker: chỉ domain
+đang chờ quyết định, có lưu lượng thật, và không nằm trong danh sách bảo vệ. Chi tiết
+ở [06 §2.4](06-classification.md).
+
+`HTTPEnricher` từ chối mọi domain phân giải về địa chỉ nội bộ. Không có bước đó, một
+domain độc hại chỉ cần trỏ bản ghi A về địa chỉ router là biến DNSGuard thành công cụ
+gọi vào chính mạng đang được bảo vệ.
 
 Nguyên tắc chung, thực thi ở lớp bọc `guarded` chứ không lặp lại trong từng nguồn:
 
@@ -423,6 +433,8 @@ Mọi giá trị đặt được qua biến môi trường, tiền tố `DNSGUAR
 | `DNSGUARD_CONFIRM_TTL_DAYS` | `180` | Domain đã chặn im lặng bao lâu thì hết hạn |
 | `DNSGUARD_ENRICH_CONCURRENCY` | `4` | Số job làm giàu song song |
 | `DNSGUARD_EXTERNAL_ENABLED` | `true` | Tắt toàn bộ truy vấn ra ngoài |
+| `DNSGUARD_HTTP_ANALYSIS_ENABLED` | `false` | Tải trang gốc của domain để phân tích header và HTML |
+| `DNSGUARD_VT_API_KEY` | — | Khóa API VirusTotal; trống thì bỏ qua nguồn này |
 | `DNSGUARD_PUBLISH_MIN_RATIO` | `0.5` | Ngưỡng chặn xuất bản khi sụt giảm |
 | `DNSGUARD_LISTS_ALLOW_CIDR` | — | Dải IP được tải `/lists/*`; trống là tất cả |
 | `DNSGUARD_SESSION_TTL_HOURS` | `168` | Thời hạn phiên đăng nhập |

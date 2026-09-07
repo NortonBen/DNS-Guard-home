@@ -148,6 +148,49 @@ func mergeFact(source, data string, f *classify.Facts) error {
 			return fmt.Errorf("decode rank fact: %w", err)
 		}
 		f.TrancoRank = v.Tranco
+
+	case "http":
+		var v struct {
+			Status         int    `json:"status"`
+			ContentType    string `json:"content_type"`
+			BodyLen        int    `json:"body_len"`
+			IsHTML         bool   `json:"is_html"`
+			IsPixel        bool   `json:"is_pixel"`
+			RedirectTo     string `json:"redirect_to"`
+			P3P            string `json:"p3p"`
+			CORS           string `json:"cors"`
+			TrackingCookie string `json:"tracking_cookie"`
+			CookieMaxDays  int    `json:"cookie_max_days"`
+			Title          string `json:"title"`
+			TextLen        int    `json:"text_len"`
+			Parking        string `json:"parking"`
+		}
+		if err := json.Unmarshal([]byte(data), &v); err != nil {
+			return fmt.Errorf("decode http fact: %w", err)
+		}
+		f.HTTP = classify.HTTPAnalysis{
+			Fetched: true, Status: v.Status, ContentType: v.ContentType,
+			BodyLen: v.BodyLen, IsHTML: v.IsHTML, IsPixel: v.IsPixel,
+			RedirectTo: v.RedirectTo, P3P: v.P3P, CORS: v.CORS,
+			TrackingCookie: v.TrackingCookie, CookieMaxDays: v.CookieMaxDays,
+			Title: v.Title, TextLen: v.TextLen, Parking: v.Parking,
+		}
+
+	case "vt":
+		var v struct {
+			Malicious  int  `json:"malicious"`
+			Suspicious int  `json:"suspicious"`
+			Harmless   int  `json:"harmless"`
+			Undetected int  `json:"undetected"`
+			Known      bool `json:"known"`
+		}
+		if err := json.Unmarshal([]byte(data), &v); err != nil {
+			return fmt.Errorf("decode vt fact: %w", err)
+		}
+		f.VT = classify.VirusTotalResult{
+			Checked: true, Known: v.Known, Malicious: v.Malicious,
+			Suspicious: v.Suspicious, Harmless: v.Harmless, Undetected: v.Undetected,
+		}
 	}
 	return nil
 }

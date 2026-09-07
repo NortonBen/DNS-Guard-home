@@ -138,10 +138,34 @@ func (r *Runner) handle(ctx context.Context, job store.Job) error {
 	}
 }
 
+// vtMinScore là điểm tối thiểu để một domain đáng tiêu một lượt quota VirusTotal.
+const vtMinScore = 3.0
+
+// candidatesFor chọn domain cho một nguồn làm giàu.
+//
+// Hai nguồn chạm trực tiếp tới máy chủ đích hoặc tiêu quota có hạn nên đi qua cổng
+// lọc hẹp hơn hẳn; các nguồn còn lại chỉ cần tới hạn TTL.
+func (r *Runner) candidatesFor(ctx context.Context, source string) ([]store.EnrichCandidate, error) {
+	switch source {
+	case "http":
+		return r.store.GatedCandidates(ctx, store.AnalysisGate{
+			Source: "http", MinQueries: 5, MaxNegativeScore: -4.0, Limit: 50,
+		})
+	case "vt":
+		minScore := vtMinScore
+		return r.store.GatedCandidates(ctx, store.AnalysisGate{
+			Source: "vt", MinQueries: 5, MinScore: &minScore,
+			MaxNegativeScore: -4.0, Limit: 20,
+		})
+	default:
+		return r.store.EnrichCandidates(ctx, source, 200)
+	}
+}
+
 // runEnrich chạy từng nguồn làm giàu cho các domain tới hạn.
 func (r *Runner) runEnrich(ctx context.Context, job store.Job) error {
 	for _, enricher := range r.enrichers.Sources() {
-		candidates, err := r.store.EnrichCandidates(ctx, enricher.Name(), 200)
+		candidates, err := r.candidatesFor(ctx, enricher.Name())
 		if err != nil {
 			return err
 		}
@@ -165,15 +189,27 @@ func (r *Runner) runEnrich(ctx context.Context, job store.Job) error {
 				if err != nil {
 					// Nguồn bị tắt không phải là lỗi cần ghi lại: nó là lựa chọn cấu
 					// hình, và ghi vào domain_facts sẽ làm bẩn dữ liệu.
-					if errors.Is(err, enrich.ErrDisabled) {
+					if errors.Is(err, enrich.ErrDisabled) || errors.Is(err, enrich.ErrVTNoAPIKey) {
 						return
 					}
-					if saveErr := r.store.SaveFactError(ctx, c.ID, enricher.Name(), err); saveErr != nil {
+					// Ghi cả khi hỏng, kèm kết cục: chính dòng thất bại này ngăn hệ
+					// thống tra lại ngay vòng sau. Không có nó, một domain không kết
+					// nối được sẽ bị hỏi lại mỗi mười lăm phút mãi mãi.
+					outcome := enrich.ClassifyOutcome(err)
+					if saveErr := r.store.SaveFactErrorWithOutcome(
+						ctx, c.ID, enricher.Name(), err, outcome); saveErr != nil {
 						r.log.Error("ghi lỗi làm giàu thất bại", "err", saveErr)
 					}
 					return
 				}
-				if err := r.store.SaveFact(ctx, c.ID, enricher.Name(), data); err != nil {
+				// Trang đỗ tên miền giữ được lâu hơn trang thường, nên chọn TTL theo
+				// nội dung đọc được chứ không chỉ theo nguồn.
+				outcome := enrich.OutcomeOK
+				if facts, ok := data.(enrich.HTTPFacts); ok && facts.Parking != "" {
+					outcome = enrich.OutcomeParking
+				}
+				if err := r.store.SaveFactWithOutcome(
+					ctx, c.ID, enricher.Name(), data, outcome); err != nil {
 					r.log.Error("lưu kết quả làm giàu thất bại", "domain", c.Name, "err", err)
 				}
 			}(c)

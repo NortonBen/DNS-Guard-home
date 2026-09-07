@@ -23,6 +23,20 @@ const (
 	KindHighRank         = "high_rank"
 	KindLongLivedContent = "long_lived_content"
 	KindSharedCDN        = "shared_cdn"
+
+	// Từ phân tích header và HTML tĩnh của trang gốc.
+	KindHTTPBeacon         = "http_beacon"
+	KindHTTPRedirectAdtech = "http_redirect_adtech"
+	KindHTTPParking        = "http_parking"
+	KindHTTPP3P            = "http_p3p"
+	KindHTTPTrackingCookie = "http_tracking_cookie"
+	KindHTTPCORSWildcard   = "http_cors_wildcard"
+	KindHTTPEmptyPage      = "http_empty_page"
+	KindHTTPRealSite       = "http_real_site"
+
+	// Từ VirusTotal.
+	KindVTMalicious = "vt_malicious"
+	KindVTClean     = "vt_clean"
 )
 
 // Ngưỡng kích hoạt tín hiệu. Khác với trọng số, chúng không sửa được qua giao diện:
@@ -43,6 +57,21 @@ const (
 
 	spreadHighMin = 50
 	spreadMidMin  = 15
+
+	// Ảnh một điểm ảnh: GIF khoảng 35–43 byte, PNG khoảng 67–95. Trên ngưỡng này thì
+	// đã là ảnh thật, dù nhỏ.
+	pixelMaxBytes = 100
+	// Trang gần như không có chữ để đọc.
+	emptyPageMaxText = 200
+	// Đủ chữ để coi là một trang người ta thật sự đọc.
+	realSiteMinText = 1500
+	// Cookie xuyên trang sống lâu hơn ngần này ngày là định danh theo dõi.
+	trackingCookieMinDays = 90
+	// Số engine tối thiểu đồng ý thì kết luận của VirusTotal mới đáng tin. Một engine
+	// đơn lẻ báo động là nhiễu nổi tiếng của dịch vụ này.
+	vtMaliciousMinEngines = 3
+	// Đủ engine đã chấm thì "sạch" mới có nghĩa.
+	vtCleanMinEngines = 60
 
 	highRankMax      = 50000
 	longLivedMinDays = 5 * 365
@@ -82,6 +111,22 @@ var DefaultWeights = Weights{
 	KindHighRank:         -8.0,
 	KindLongLivedContent: -2.0,
 	KindSharedCDN:        -6.0,
+
+	// Không tín hiệu HTTP nào một mình vượt ngưỡng ads (5,5): chúng là bằng chứng bổ
+	// trợ cho tín hiệu hạ tầng, không thay thế.
+	KindHTTPBeacon:         4.0,
+	KindHTTPRedirectAdtech: 4.0,
+	KindHTTPParking:        3.0,
+	KindHTTPP3P:            2.5,
+	KindHTTPTrackingCookie: 2.0,
+	KindHTTPCORSWildcard:   1.0,
+	KindHTTPEmptyPage:      1.0,
+	KindHTTPRealSite:       -2.0,
+
+	// Vượt ngưỡng malware (3,0) một mình, và đó là chủ ý: ngưỡng đó được đặt thấp
+	// chính vì loại bằng chứng này.
+	KindVTMalicious: 4.0,
+	KindVTClean:     -1.0,
 }
 
 // SignalLabels là nhãn tiếng Việt cho giao diện chỉnh trọng số.
@@ -102,6 +147,18 @@ var SignalLabels = map[string]string{
 	KindHighRank:         "Thứ hạng Tranco cao",
 	KindLongLivedContent: "Domain lâu đời, không có dấu hiệu hạ tầng",
 	KindSharedCDN:        "Phân giải về CDN dùng chung",
+
+	KindHTTPBeacon:         "Không phục vụ trang, chỉ trả pixel hoặc rỗng",
+	KindHTTPRedirectAdtech: "Chuyển hướng tới hạ tầng adtech",
+	KindHTTPParking:        "Trang đỗ tên miền",
+	KindHTTPP3P:            "Có header P3P (thủ thuật cookie của mạng quảng cáo)",
+	KindHTTPTrackingCookie: "Cookie xuyên trang sống lâu",
+	KindHTTPCORSWildcard:   "Mở CORS cho mọi nguồn, không phải trang web",
+	KindHTTPEmptyPage:      "Trang trống, không có nội dung đọc được",
+	KindHTTPRealSite:       "Trang thật, có tiêu đề và nội dung",
+
+	KindVTMalicious: "VirusTotal: nhiều engine báo độc hại",
+	KindVTClean:     "VirusTotal: sạch",
 }
 
 // infraKinds là các tín hiệu hạ tầng, dùng để tính độ tin cậy và để quyết định
@@ -111,6 +168,11 @@ var infraKinds = map[string]bool{
 	KindCNAMEBlocked: true,
 	KindASNAdtech:    true,
 	KindCertAdtech:   true,
+
+	// Hai tín hiệu HTTP này nói về chính hạ tầng của domain chứ không về cách trang
+	// kiếm tiền, nên chúng cũng nâng độ tin cậy như nhóm hạ tầng.
+	KindHTTPBeacon:         true,
+	KindHTTPRedirectAdtech: true,
 }
 
 // IsInfraKind cho biết một loại tín hiệu có thuộc nhóm hạ tầng không.

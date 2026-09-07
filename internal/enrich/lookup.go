@@ -2,11 +2,16 @@ package enrich
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"time"
 )
 
@@ -146,4 +151,69 @@ func download(ctx context.Context, url, dir, base string) (int64, string, error)
 		return 0, "", fmt.Errorf("tải %q: nội dung rỗng", url)
 	}
 	return size, tmpName, nil
+}
+
+// Kết cục của một lần làm giàu, dùng để chọn thời gian sống cho bản ghi cache.
+//
+// Phân loại đủ chi tiết để mỗi kết cục có nhịp thử lại riêng: một host đã chết thì
+// đừng hỏi lại mỗi giờ, còn hết quota thì nên thử lại ngay trong ngày.
+const (
+	OutcomeOK          = "ok"
+	OutcomeParking     = "parking"
+	OutcomeDNSFail     = "dns_fail"
+	OutcomeRefused     = "refused"
+	OutcomeTimeout     = "timeout"
+	OutcomeTLSError    = "tls_error"
+	OutcomeHTTPError   = "http_error"
+	OutcomeBlockedHost = "blocked_host"
+	OutcomeNotFound    = "not_found"
+	OutcomeQuota       = "quota"
+	OutcomeOther       = "other"
+)
+
+// ClassifyOutcome quy một lỗi về một kết cục đã biết.
+func ClassifyOutcome(err error) string {
+	if err == nil {
+		return OutcomeOK
+	}
+
+	switch {
+	case errors.Is(err, ErrPrivateAddress):
+		return OutcomeBlockedHost
+	case errors.Is(err, ErrNoAddress):
+		return OutcomeDNSFail
+	case errors.Is(err, ErrVTQuota):
+		return OutcomeQuota
+	case errors.Is(err, ErrVTNotFound):
+		return OutcomeNotFound
+	case errors.Is(err, context.DeadlineExceeded), os.IsTimeout(err):
+		return OutcomeTimeout
+	case errors.Is(err, syscall.ECONNREFUSED), errors.Is(err, syscall.EHOSTUNREACH),
+		errors.Is(err, syscall.ENETUNREACH):
+		return OutcomeRefused
+	}
+
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return OutcomeDNSFail
+	}
+	var certErr *tls.CertificateVerificationError
+	if errors.As(err, &certErr) {
+		return OutcomeTLSError
+	}
+	var recordErr tls.RecordHeaderError
+	if errors.As(err, &recordErr) {
+		return OutcomeTLSError
+	}
+
+	// net.Error có Timeout() riêng, không phải lúc nào cũng khớp os.IsTimeout.
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return OutcomeTimeout
+	}
+
+	if strings.Contains(err.Error(), "tls:") || strings.Contains(err.Error(), "x509:") {
+		return OutcomeTLSError
+	}
+	return OutcomeOther
 }

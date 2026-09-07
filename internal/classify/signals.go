@@ -255,3 +255,160 @@ func shannonEntropy(s string) float64 {
 }
 
 func round2(f float64) float64 { return math.Round(f*100) / 100 }
+
+// httpSignals — bằng chứng từ header phản hồi và HTML tĩnh của trang gốc.
+//
+// Nguyên tắc phân biệt quan trọng nhất của cả nhóm: các tín hiệu ở đây phải nói về
+// *danh tính của domain*, không phải về *cách trang kiếm tiền*. Một tờ báo nhúng đầy
+// mã quảng cáo vẫn là nội dung. Vì thế nhóm này cố ý không đếm số script bên thứ ba
+// và không dò dấu vân tay gtag/fbq/adsbygoogle — chúng dính vào gần như mọi trang có
+// quảng cáo, và dùng chúng là cách nhanh nhất phá vỡ mục tiêu precision.
+func httpSignals(f Facts, w Weights) []Signal {
+	h := f.HTTP
+	if !h.Fetched {
+		return nil
+	}
+
+	var out []Signal
+
+	// Một hostname mà trình duyệt đã phân giải nhưng không trả về trang nào — chỉ một
+	// pixel, một 204, hoặc thân rỗng không phải HTML — thì không phải nơi người ta
+	// ghé thăm. Nó là điểm thu thập.
+	switch {
+	case h.Status == 204:
+		out = append(out, Signal{
+			Kind: KindHTTPBeacon, Weight: w.Get(KindHTTPBeacon),
+			Detail: map[string]any{"status": 204, "reason": "204 No Content"},
+		})
+	case h.IsPixel:
+		out = append(out, Signal{
+			Kind: KindHTTPBeacon, Weight: w.Get(KindHTTPBeacon),
+			Detail: map[string]any{"content_type": h.ContentType, "length": h.BodyLen,
+				"reason": "ảnh một điểm ảnh"},
+		})
+	case h.Status == 200 && !h.IsHTML && h.BodyLen == 0:
+		out = append(out, Signal{
+			Kind: KindHTTPBeacon, Weight: w.Get(KindHTTPBeacon),
+			Detail: map[string]any{"content_type": h.ContentType, "reason": "200 thân rỗng"},
+		})
+	}
+
+	// Chuyển hướng sang hạ tầng adtech là phiên bản HTTP của CNAME cloaking: tên miền
+	// trông vô hại nhưng đích thật nằm ở nơi khác.
+	if h.RedirectTo != "" {
+		if host := hostOf(h.RedirectTo); host != "" {
+			if _, matched, ok := hasAdtechSuffix(host); ok {
+				out = append(out, Signal{
+					Kind: KindHTTPRedirectAdtech, Weight: w.Get(KindHTTPRedirectAdtech),
+					Detail: map[string]any{"location": h.RedirectTo, "matched": matched},
+				})
+			}
+		}
+	}
+
+	if h.Parking != "" {
+		out = append(out, Signal{
+			Kind: KindHTTPParking, Weight: w.Get(KindHTTPParking),
+			Detail: map[string]any{"provider": h.Parking},
+		})
+	}
+
+	// P3P là chuẩn đã chết, ngày nay gần như chỉ còn các mạng quảng cáo giữ lại để
+	// lách chính sách cookie của trình duyệt cũ.
+	if h.P3P != "" {
+		out = append(out, Signal{
+			Kind: KindHTTPP3P, Weight: w.Get(KindHTTPP3P),
+			Detail: map[string]any{"p3p": truncate(h.P3P, 120)},
+		})
+	}
+
+	// SameSite=None nghĩa là cookie cố ý gửi kèm trong ngữ cảnh bên thứ ba; cộng thời
+	// hạn dài thì đó là định danh theo dõi chứ không phải cookie phiên.
+	if h.TrackingCookie != "" && h.CookieMaxDays >= trackingCookieMinDays {
+		out = append(out, Signal{
+			Kind: KindHTTPTrackingCookie, Weight: w.Get(KindHTTPTrackingCookie),
+			Detail: map[string]any{"cookie": h.TrackingCookie, "days": h.CookieMaxDays},
+		})
+	}
+
+	// Mở CORS cho mọi nguồn thì bình thường với CDN và API công khai; chỉ đáng ngờ
+	// khi đi kèm việc không phục vụ trang nào.
+	if h.CORS == "*" && !h.IsHTML {
+		out = append(out, Signal{
+			Kind: KindHTTPCORSWildcard, Weight: w.Get(KindHTTPCORSWildcard),
+			Detail: map[string]any{"content_type": h.ContentType},
+		})
+	}
+
+	if h.IsHTML && h.Status == 200 {
+		switch {
+		case h.TextLen < emptyPageMaxText && h.Title == "":
+			out = append(out, Signal{
+				Kind: KindHTTPEmptyPage, Weight: w.Get(KindHTTPEmptyPage),
+				Detail: map[string]any{"text_len": h.TextLen},
+			})
+		case h.TextLen >= realSiteMinText && h.Title != "":
+			// Tín hiệu âm: một trang có tiêu đề và có nội dung để đọc gần như luôn là
+			// nội dung thật. Giữ ở mức nhẹ vì trang giới thiệu của chính công ty
+			// adtech cũng là trang thật — ở đó tín hiệu hạ tầng phải thắng.
+			out = append(out, Signal{
+				Kind: KindHTTPRealSite, Weight: w.Get(KindHTTPRealSite),
+				Detail: map[string]any{"title": truncate(h.Title, 80), "text_len": h.TextLen},
+			})
+		}
+	}
+
+	return out
+}
+
+// virusTotalSignals — kết luận tổng hợp của nhiều engine diệt mã độc.
+func virusTotalSignals(f Facts, w Weights) []Signal {
+	vt := f.VT
+	if !vt.Checked || !vt.Known {
+		return nil
+	}
+
+	// Ngưỡng ba engine chứ không phải một: một engine đơn lẻ báo động là nhiễu nổi
+	// tiếng của VirusTotal. Ba engine độc lập đồng ý mới là bằng chứng.
+	if vt.Malicious >= vtMaliciousMinEngines {
+		return []Signal{{
+			Kind: KindVTMalicious, Weight: w.Get(KindVTMalicious),
+			Detail: map[string]any{"malicious": vt.Malicious, "suspicious": vt.Suspicious},
+		}}
+	}
+
+	if vt.Malicious == 0 && vt.Harmless+vt.Undetected >= vtCleanMinEngines {
+		return []Signal{{
+			Kind: KindVTClean, Weight: w.Get(KindVTClean),
+			Detail: map[string]any{"harmless": vt.Harmless, "engines": vt.Harmless + vt.Undetected},
+		}}
+	}
+
+	return nil
+}
+
+// hostOf lấy phần host của một URL mà không cần phân tích đầy đủ.
+func hostOf(rawURL string) string {
+	s := rawURL
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+	}
+	if i := strings.IndexAny(s, "/?#"); i >= 0 {
+		s = s[:i]
+	}
+	if i := strings.LastIndexByte(s, '@'); i >= 0 {
+		s = s[i+1:]
+	}
+	if i := strings.IndexByte(s, ':'); i >= 0 {
+		s = s[:i]
+	}
+	return strings.ToLower(strings.TrimSuffix(s, "."))
+}
+
+// truncate cắt chuỗi dài để bằng chứng lưu trong nhật ký không phình ra.
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
+}
