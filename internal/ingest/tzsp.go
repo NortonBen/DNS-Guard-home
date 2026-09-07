@@ -72,10 +72,10 @@ func decodeTZSP(buf []byte) (packet, error) {
 // tzspPayload kiểm tra header TZSP, bỏ qua danh sách thẻ và trả về khung Ethernet.
 func tzspPayload(buf []byte) ([]byte, error) {
 	if len(buf) < tzspHeaderLen {
-		return nil, fmt.Errorf("TZSP: %w (%d byte)", errShortPacket, len(buf))
+		return nil, fmt.Errorf("tzsp: %w (%d byte)", errShortPacket, len(buf))
 	}
 	if buf[0] != tzspVersion {
-		return nil, fmt.Errorf("TZSP: phiên bản %d không hỗ trợ", buf[0])
+		return nil, fmt.Errorf("tzsp: phiên bản %d không hỗ trợ", buf[0])
 	}
 	if encap := binary.BigEndian.Uint16(buf[2:4]); encap != tzspEncapEther {
 		return nil, fmt.Errorf("%w (encap %#04x)", errNotEthernet, encap)
@@ -84,7 +84,7 @@ func tzspPayload(buf []byte) ([]byte, error) {
 	i := tzspHeaderLen
 	for consumed := 0; i < len(buf); consumed++ {
 		if consumed > tzspMaxTagBytes {
-			return nil, errors.New("TZSP: danh sách thẻ không kết thúc")
+			return nil, errors.New("tzsp: danh sách thẻ không kết thúc")
 		}
 		switch tag := buf[i]; tag {
 		case tzspTagEnd:
@@ -93,18 +93,18 @@ func tzspPayload(buf []byte) ([]byte, error) {
 			i++ // thẻ đệm không có trường độ dài
 		default:
 			if i+1 >= len(buf) {
-				return nil, fmt.Errorf("TZSP: %w ở thẻ %#02x", errShortPacket, tag)
+				return nil, fmt.Errorf("tzsp: %w ở thẻ %#02x", errShortPacket, tag)
 			}
 			i += 2 + int(buf[i+1])
 		}
 	}
-	return nil, errors.New("TZSP: thiếu thẻ kết thúc")
+	return nil, errors.New("tzsp: thiếu thẻ kết thúc")
 }
 
 // decodeEthernet bóc khung Ethernet, bỏ qua thẻ VLAN nếu có, rồi chuyển xuống IP.
 func decodeEthernet(frame []byte) (packet, error) {
 	if len(frame) < ethHeaderLen {
-		return packet{}, fmt.Errorf("Ethernet: %w", errShortPacket)
+		return packet{}, fmt.Errorf("ethernet: %w", errShortPacket)
 	}
 	off := 12
 	etherType := binary.BigEndian.Uint16(frame[off : off+2])
@@ -116,7 +116,7 @@ func decodeEthernet(frame []byte) (packet, error) {
 			break
 		}
 		if len(frame) < off+4 {
-			return packet{}, fmt.Errorf("VLAN: %w", errShortPacket)
+			return packet{}, fmt.Errorf("vlan: %w", errShortPacket)
 		}
 		etherType = binary.BigEndian.Uint16(frame[off+2 : off+4])
 		off += 4
@@ -134,30 +134,30 @@ func decodeEthernet(frame []byte) (packet, error) {
 
 func decodeIPv4(b []byte) (packet, error) {
 	if len(b) < 20 {
-		return packet{}, fmt.Errorf("IPv4: %w", errShortPacket)
+		return packet{}, fmt.Errorf("ipv4: %w", errShortPacket)
 	}
 	ihl := int(b[0]&0x0F) * 4
 	if ihl < 20 || len(b) < ihl {
-		return packet{}, fmt.Errorf("IPv4: độ dài header %d không hợp lệ", ihl)
+		return packet{}, fmt.Errorf("ipv4: độ dài header %d không hợp lệ", ihl)
 	}
 	// Gói phân mảnh: chỉ mảnh đầu mới có header UDP. Truy vấn DNS qua UDP hiếm khi
 	// vượt MTU, nên bỏ qua các mảnh sau thay vì ghép lại.
 	if flagsFrag := binary.BigEndian.Uint16(b[6:8]); flagsFrag&0x1FFF != 0 {
-		return packet{}, errors.New("IPv4: bỏ qua mảnh phân mảnh")
+		return packet{}, errors.New("ipv4: bỏ qua mảnh phân mảnh")
 	}
 	if b[9] != protoUDP {
 		return packet{}, fmt.Errorf("%w (proto %d)", errUnsupportedL3, b[9])
 	}
 	src, ok := netip.AddrFromSlice(b[12:16])
 	if !ok {
-		return packet{}, errors.New("IPv4: địa chỉ nguồn không hợp lệ")
+		return packet{}, errors.New("ipv4: địa chỉ nguồn không hợp lệ")
 	}
 	return decodeUDP(src, b[ihl:])
 }
 
 func decodeIPv6(b []byte) (packet, error) {
 	if len(b) < 40 {
-		return packet{}, fmt.Errorf("IPv6: %w", errShortPacket)
+		return packet{}, fmt.Errorf("ipv6: %w", errShortPacket)
 	}
 	// Không đi qua chuỗi extension header: truy vấn DNS trong mạng LAN không dùng
 	// tới chúng, và bỏ qua gói lạ an toàn hơn là đoán sai vị trí payload.
@@ -166,14 +166,14 @@ func decodeIPv6(b []byte) (packet, error) {
 	}
 	src, ok := netip.AddrFromSlice(b[8:24])
 	if !ok {
-		return packet{}, errors.New("IPv6: địa chỉ nguồn không hợp lệ")
+		return packet{}, errors.New("ipv6: địa chỉ nguồn không hợp lệ")
 	}
 	return decodeUDP(src, b[40:])
 }
 
 func decodeUDP(src netip.Addr, b []byte) (packet, error) {
 	if len(b) < 8 {
-		return packet{}, fmt.Errorf("UDP: %w", errShortPacket)
+		return packet{}, fmt.Errorf("udp: %w", errShortPacket)
 	}
 	if dstPort := binary.BigEndian.Uint16(b[2:4]); dstPort != dnsPort {
 		return packet{}, fmt.Errorf("%w (cổng đích %d)", errNotDNSQuery, dstPort)

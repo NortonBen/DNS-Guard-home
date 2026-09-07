@@ -53,11 +53,14 @@ test-go:
 test-web:
 	cd web && npm run typecheck
 
-lint:            ## gofmt, go vet, staticcheck
-	@test -z "$$(gofmt -l ./cmd ./internal)" || (gofmt -l ./cmd ./internal; exit 1)
+lint:             ## gofmt, go vet, staticcheck
+	@test -z "$$(gofmt -l ./cmd ./internal ./tools)" || \
+		(gofmt -l ./cmd ./internal ./tools; exit 1)
 	go vet ./...
-	@command -v staticcheck >/dev/null 2>&1 && staticcheck ./... || \
-		echo "bỏ qua staticcheck (chưa cài)"
+	# Chạy qua `go run` thay vì đòi cài sẵn. Bỏ qua khi thiếu công cụ nghĩa là
+	# local xanh còn CI đỏ — và lỗi đầu tiên lọt qua đúng theo cách đó lại là
+	# một lỗ hổng thật: middleware.RealIP tin header do client tự gửi.
+	go run honnef.co/go/tools/cmd/staticcheck@2026.1 ./...
 
 fmt:
 	gofmt -w ./cmd ./internal

@@ -58,9 +58,6 @@ const (
 	spreadHighMin = 50
 	spreadMidMin  = 15
 
-	// Ảnh một điểm ảnh: GIF khoảng 35–43 byte, PNG khoảng 67–95. Trên ngưỡng này thì
-	// đã là ảnh thật, dù nhỏ.
-	pixelMaxBytes = 100
 	// Trang gần như không có chữ để đọc.
 	emptyPageMaxText = 200
 	// Đủ chữ để coi là một trang người ta thật sự đọc.

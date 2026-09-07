@@ -66,7 +66,11 @@ func New(o Options) *Server {
 // Handler dựng router.
 func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.RealIP)
+	// Cố ý KHÔNG dùng middleware.RealIP: nó ghi đè r.RemoteAddr bằng giá trị lấy từ
+	// X-Forwarded-For / X-Real-IP, mà những header đó do chính client gửi lên. Hệ
+	// thống này chạy trong mạng nội bộ và không nằm sau proxy, nên tin chúng nghĩa là
+	// bất kỳ ai cũng lách được giới hạn đăng nhập sai (chỉ cần đổi header mỗi lần) và
+	// vượt được danh sách dải IP cho phép tải /lists (chỉ cần khai mình là 192.168.x).
 	r.Use(recoverPanic(s.log))
 	r.Use(requestLogger(s.log))
 	r.Use(middleware.Compress(5, "application/json", "text/plain", "text/html", "text/css", "application/javascript"))

@@ -27,9 +27,11 @@ jobs:
 
       - run: go vet ./...
 
+      # Ghim cùng phiên bản với Makefile: "latest" làm CI đổi hành vi dưới chân mình
+      # và tạo ra lỗi chỉ xuất hiện trên CI chứ không tái hiện được ở máy dev.
       - uses: dominikh/staticcheck-action@v1
         with:
-          version: latest
+          version: "2026.1"
           install-go: false
 
       # -race bắt được tranh chấp giữa vòng đọc socket và vòng ghi CSDL, thứ không

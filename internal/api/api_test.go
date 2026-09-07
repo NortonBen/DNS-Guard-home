@@ -33,10 +33,18 @@ type harness struct {
 	t        *testing.T
 	server   *httptest.Server
 	store    *store.Store
+	srv      *Server
 	listsDir string
 
 	cookie string
 	csrf   string
+}
+
+// setListsAllowCIDR đổi danh sách dải IP cho phép rồi dựng lại router.
+func (h *harness) setListsAllowCIDR(cidrs ...string) {
+	h.t.Helper()
+	h.srv.cfg.ListsAllowCIDR = cidrs
+	h.server.Config.Handler = h.srv.Handler()
 }
 
 func newHarness(t *testing.T) *harness {
@@ -71,7 +79,7 @@ func newHarness(t *testing.T) *harness {
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 
-	h := &harness{t: t, server: ts, store: db, listsDir: listsDir}
+	h := &harness{t: t, server: ts, store: db, srv: srv, listsDir: listsDir}
 
 	hash, err := auth.HashPassword("mật-khẩu-thử")
 	if err != nil {
@@ -533,5 +541,70 @@ func TestListFieldsAreNeverNull(t *testing.T) {
 		if string(graph[field]) == "null" {
 			t.Errorf("trường graph.%q trả về null, phải là []", field)
 		}
+	}
+}
+
+// Header do client gửi lên không được phép quyết định IP nguồn.
+//
+// chi có middleware.RealIP ghi đè r.RemoteAddr bằng X-Forwarded-For / X-Real-IP.
+// Dùng nó ở đây là mở hai lỗ cùng lúc: đổi header mỗi lần là lách được giới hạn đăng
+// nhập sai, và khai mình là 192.168.x là vượt được danh sách dải IP cho phép tải
+// /lists. Hệ thống này không nằm sau proxy nên không có lý do gì tin những header đó.
+func TestForgedForwardedHeaderCannotBypassLoginRateLimit(t *testing.T) {
+	h := newHarness(t)
+
+	// Dùng hết hạn mức bằng năm lần sai từ cùng một IP thật.
+	for range 5 {
+		resp, _ := h.do(http.MethodPost, "/api/v1/auth/login",
+			map[string]string{"username": "admin", "password": "sai"})
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("= %d, muốn 401", resp.StatusCode)
+		}
+	}
+
+	// Giả mạo header để tỏ ra là một IP khác. Nếu máy chủ tin, hạn mức sẽ được cấp
+	// lại và lần thử này trả 401 thay vì 429.
+	for _, header := range []string{"X-Forwarded-For", "X-Real-IP", "True-Client-IP"} {
+		req, err := http.NewRequest(http.MethodPost, h.server.URL+"/api/v1/auth/login",
+			strings.NewReader(`{"username":"admin","password":"sai"}`))
+		if err != nil {
+			t.Fatalf("dựng request: %v", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(header, "203.0.113.99")
+
+		resp, err := h.server.Client().Do(req)
+		if err != nil {
+			t.Fatalf("gửi request: %v", err)
+		}
+		resp.Body.Close()
+
+		if resp.StatusCode != http.StatusTooManyRequests {
+			t.Errorf("%s giả mạo → HTTP %d, muốn 429: header do client đặt đã cấp lại hạn mức",
+				header, resp.StatusCode)
+		}
+	}
+}
+
+// Danh sách dải IP cho phép tải /lists cũng không được tin header client.
+func TestForgedForwardedHeaderCannotBypassListsAllowlist(t *testing.T) {
+	h := newHarness(t)
+	// Chỉ cho phép một dải không chứa loopback của httptest.
+	h.setListsAllowCIDR("10.99.0.0/16")
+
+	req, err := http.NewRequest(http.MethodGet, h.server.URL+"/lists/ads.txt", nil)
+	if err != nil {
+		t.Fatalf("dựng request: %v", err)
+	}
+	req.Header.Set("X-Forwarded-For", "10.99.0.5")
+
+	resp, err := h.server.Client().Do(req)
+	if err != nil {
+		t.Fatalf("gửi request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("X-Forwarded-For giả mạo → HTTP %d, muốn 403", resp.StatusCode)
 	}
 }
