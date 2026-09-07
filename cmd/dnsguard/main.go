@@ -67,6 +67,10 @@ func run() error {
 	builder := graph.New(db, log)
 	enrichers := buildEnrichers(cfg, log)
 
+	// Công tắc phân tích HTTP lưu trong CSDL và sửa được từ giao diện; biến môi trường
+	// chỉ còn là giá trị mặc định cho lần chạy đầu.
+	applyStoredAnalysisSetting(context.Background(), db, cfg, enrichers, log)
+
 	runner := worker.New(db, cfg, enrichers, publisher, syncer, builder, bus, log)
 	listener := ingest.NewListener(ingest.Options{Addr: cfg.TZSPListen}, db, log)
 
@@ -190,6 +194,27 @@ func buildEnrichers(cfg config.Config, log *slog.Logger) *enrich.Registry {
 	}
 
 	return registry
+}
+
+// applyStoredAnalysisSetting đọc công tắc đã lưu và áp vào registry.
+func applyStoredAnalysisSetting(ctx context.Context, db *store.Store, cfg config.Config,
+	enrichers *enrich.Registry, log *slog.Logger) {
+
+	enabled := cfg.HTTPAnalysisEnabled
+	var stored bool
+	if ok, err := db.GetSetting(ctx, store.SettingHTTPAnalysis, &stored); err != nil {
+		log.Warn("không đọc được cấu hình phân tích HTTP", "err", err)
+	} else if ok {
+		enabled = stored
+	}
+
+	// DNSGUARD_EXTERNAL_ENABLED là công tắc cứng: bật trong giao diện cũng không
+	// thắng được nó.
+	effective := enabled && cfg.ExternalEnabled
+	enrichers.SetEnabled("http", effective)
+
+	log.Info("phân tích HTTP", "enabled", effective,
+		"nguon", map[bool]string{true: "cài đặt", false: "mặc định"}[enabled != cfg.HTTPAnalysisEnabled])
 }
 
 // ensureFirstAdmin tạo tài khoản quản trị đầu tiên khi CSDL còn trống.

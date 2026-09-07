@@ -18,6 +18,7 @@ import type {
   Overview,
   Page,
   RelationGraph,
+  AnalysisSettings,
   Session,
   Settings,
   Snapshot,
@@ -474,6 +475,15 @@ export function useUpdateLifecycle() {
  * Trả về job_id chứ không đợi xong: bảng ASN khoảng mười megabyte và có thể mất vài
  * phút trên đường truyền chậm. Giao diện theo dõi tiến độ qua useJob.
  */
+export function useUpdateAnalysis() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { http_enabled: boolean }) =>
+      api<AnalysisSettings>('/settings/analysis', { method: 'PUT', body }),
+    onSuccess: () => client.invalidateQueries({ queryKey: qk.settings() }),
+  });
+}
+
 export function useRefreshLookup() {
   const client = useQueryClient();
   return useMutation({

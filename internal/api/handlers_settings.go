@@ -51,9 +51,77 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 			"staging_days_default":     s.cfg.StagingDays,
 			"confirm_ttl_days_default": s.cfg.ConfirmTTLDays,
 		},
+		"analysis":      s.analysisSettings(ctx),
 		"lookup_tables": tables,
 		"system":        s.systemInfo(),
 	})
+}
+
+// analysisSettings mô tả trạng thái hai nguồn chạm trực tiếp ra ngoài.
+func (s *Server) analysisSettings(ctx context.Context) map[string]any {
+	enabled := s.httpAnalysisEnabled(ctx)
+
+	vtConfigured := false
+	if s.enrichers != nil {
+		vtConfigured = s.enrichers.Has("vt") && s.enrichers.IsEnabled("vt")
+	}
+
+	return map[string]any{
+		"http_enabled": enabled,
+		// Biến môi trường là công tắc cứng: bật trong giao diện cũng không thắng được
+		// nó. Trả ra để giao diện giải thích được vì sao nút bị khóa.
+		"external_enabled": s.cfg.ExternalEnabled,
+		"http_effective":   enabled && s.cfg.ExternalEnabled,
+		"vt_configured":    vtConfigured,
+	}
+}
+
+// httpAnalysisEnabled đọc công tắc từ settings, lùi về biến môi trường khi chưa đặt.
+func (s *Server) httpAnalysisEnabled(ctx context.Context) bool {
+	var v bool
+	if ok, err := s.store.GetSetting(ctx, store.SettingHTTPAnalysis, &v); err == nil && ok {
+		return v
+	}
+	return s.cfg.HTTPAnalysisEnabled
+}
+
+type analysisRequest struct {
+	HTTPEnabled *bool `json:"http_enabled"`
+}
+
+// handleUpdateAnalysis bật hoặc tắt việc phân tích HTTP ngay lúc chạy.
+func (s *Server) handleUpdateAnalysis(w http.ResponseWriter, r *http.Request) {
+	sess, _ := sessionFrom(r.Context())
+	ctx := r.Context()
+
+	var req analysisRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidInput, "Dữ liệu không hợp lệ", nil)
+		return
+	}
+
+	if req.HTTPEnabled != nil {
+		if *req.HTTPEnabled && !s.cfg.ExternalEnabled {
+			// Công tắc cứng ở biến môi trường thắng. Nói rõ thay vì lưu một giá trị
+			// không có tác dụng gì.
+			writeError(w, http.StatusUnprocessableEntity, CodeValidation,
+				"Không bật được khi DNSGUARD_EXTERNAL_ENABLED=false", nil)
+			return
+		}
+		if err := s.store.SetSetting(ctx, store.SettingHTTPAnalysis,
+			*req.HTTPEnabled, sess.Username); err != nil {
+			fail(w, s.log, err)
+			return
+		}
+		// Áp dụng ngay vào registry đang chạy: không bắt khởi động lại dịch vụ.
+		if s.enrichers != nil {
+			s.enrichers.SetEnabled("http", *req.HTTPEnabled && s.cfg.ExternalEnabled)
+		}
+		s.log.Info("đổi cấu hình phân tích HTTP",
+			"enabled", *req.HTTPEnabled, "by", sess.Username)
+	}
+
+	writeJSON(w, http.StatusOK, s.analysisSettings(ctx))
 }
 
 // lifecycleDays đọc ngưỡng vòng đời từ settings, lùi về biến môi trường khi chưa đặt.

@@ -127,6 +127,7 @@ func (s *Server) Handler() http.Handler {
 				r.Get("/settings/protect", s.handleGetProtect)
 				r.Put("/settings/protect", s.handleUpdateProtect)
 				r.Put("/settings/lifecycle", s.handleUpdateLifecycle)
+				r.Put("/settings/analysis", s.handleUpdateAnalysis)
 				r.Post("/settings/lookup/{kind}/refresh", s.handleRefreshLookup)
 			})
 		})

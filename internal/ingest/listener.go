@@ -83,6 +83,9 @@ type Listener struct {
 	// listenErr giữ lỗi khiến bộ nhận không chạy được, để /health nói đúng nguyên nhân.
 	listenErr atomic.Pointer[string]
 
+	// localAddr là địa chỉ thật sau khi bind, khác cấu hình khi cổng đặt là 0.
+	localAddr atomic.Pointer[string]
+
 	// etld1Cache tránh gọi Public Suffix List cho mỗi gói. Một mạng gia đình chỉ
 	// gặp vài chục nghìn tên miền phân biệt, nên cache đầy đủ là rẻ.
 	etld1Cache sync.Map
@@ -116,12 +119,15 @@ func (l *Listener) Run(ctx context.Context) error {
 	defer conn.Close()
 	l.clearListenError()
 
+	bound := conn.LocalAddr().String()
+	l.localAddr.Store(&bound)
+
 	// Bộ đệm nhận lớn: mirror có thể dồn cụm khi mạng bận.
 	if err := conn.SetReadBuffer(4 << 20); err != nil {
 		l.log.Warn("không đặt được bộ đệm nhận", "err", err)
 	}
 
-	l.log.Info("nhận luồng TZSP", "addr", l.opts.Addr)
+	l.log.Info("nhận luồng TZSP", "addr", bound)
 
 	queue := make(chan Event, l.opts.QueueSize)
 	var wg sync.WaitGroup
@@ -270,6 +276,14 @@ func (l *Listener) Stats() Stats {
 		s.ListenError = *msg
 	}
 	return s
+}
+
+// LocalAddr trả về địa chỉ đang lắng nghe, rỗng nếu chưa bind được.
+func (l *Listener) LocalAddr() string {
+	if a := l.localAddr.Load(); a != nil {
+		return *a
+	}
+	return ""
 }
 
 func (l *Listener) setListenError(err error) {

@@ -286,8 +286,17 @@ export interface SystemInfo {
   auto_migrate: boolean;
 }
 
+export interface AnalysisSettings {
+  http_enabled: boolean;
+  /** Công tắc cứng ở biến môi trường; bật trong giao diện cũng không thắng được nó. */
+  external_enabled: boolean;
+  http_effective: boolean;
+  vt_configured: boolean;
+}
+
 export interface Settings {
   protect: { hard: string[]; soft: string[] };
+  analysis: AnalysisSettings;
   lifecycle: {
     staging_days: number;
     confirm_ttl_days: number;

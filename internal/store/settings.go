@@ -14,6 +14,10 @@ const (
 	SettingSoftAllow   = "protect.soft_allow"
 	SettingStagingDays = "lifecycle.staging_days"
 	SettingConfirmTTL  = "lifecycle.confirm_ttl_days"
+	// SettingHTTPAnalysis bật việc tải trang gốc của domain để phân tích. Đây là
+	// quyết định vận hành chứ không phải hạ tầng — người dùng cần bật tắt được mà
+	// không phải khởi động lại dịch vụ.
+	SettingHTTPAnalysis = "analysis.http_enabled"
 )
 
 // GetSetting đọc một giá trị cấu hình vào dest. Trả về false nếu chưa được đặt.

@@ -187,9 +187,16 @@ func (r *Runner) runEnrich(ctx context.Context, job store.Job) error {
 
 				data, err := enricher.Enrich(ctx, c.Name)
 				if err != nil {
-					// Nguồn bị tắt không phải là lỗi cần ghi lại: nó là lựa chọn cấu
-					// hình, và ghi vào domain_facts sẽ làm bẩn dữ liệu.
-					if errors.Is(err, enrich.ErrDisabled) || errors.Is(err, enrich.ErrVTNoAPIKey) {
+					// Ba lỗi này nói về *nguồn*, không nói gì về domain, nên không được
+					// ghi vào domain_facts.
+					//
+					// Circuit breaker là trường hợp nguy hiểm nhất: một loạt domain
+					// chết làm nó mở ra, rồi mọi domain xếp sau — kể cả domain hoàn
+					// toàn khỏe mạnh — bị đánh dấu thất bại và treo cache nhiều ngày
+					// dù chưa hề được thử. Bỏ qua và để vòng sau tra lại.
+					if errors.Is(err, enrich.ErrDisabled) ||
+						errors.Is(err, enrich.ErrCircuitOpen) ||
+						errors.Is(err, enrich.ErrVTNoAPIKey) {
 						return
 					}
 					// Ghi cả khi hỏng, kèm kết cục: chính dòng thất bại này ngăn hệ

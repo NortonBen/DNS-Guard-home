@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -68,13 +69,16 @@ type guarded struct {
 	inner   Enricher
 	limiter *rate.Limiter
 	breaker *breaker
-	enabled bool
+
+	// enabled đọc và ghi được lúc chạy: một số nguồn bật/tắt từ giao diện, và bắt
+	// khởi động lại dịch vụ chỉ để đổi một công tắc là không chấp nhận được.
+	enabled atomic.Bool
 }
 
 func (g *guarded) Name() string { return g.inner.Name() }
 
 func (g *guarded) Enrich(ctx context.Context, domain string) (any, error) {
-	if !g.enabled {
+	if !g.enabled.Load() {
 		return nil, ErrDisabled
 	}
 	if !g.breaker.allow() {
@@ -105,12 +109,44 @@ func NewRegistry(log *slog.Logger) *Registry {
 // Giới hạn đặt riêng từng nguồn vì chúng khác nhau rất xa: phân giải DNS cục bộ chịu
 // được hàng chục truy vấn mỗi giây, còn crt.sh sẽ chặn nếu vượt vài truy vấn mỗi phút.
 func (r *Registry) Register(e Enricher, perSecond float64, burst int, enabled bool) {
-	r.sources = append(r.sources, &guarded{
+	g := &guarded{
 		inner:   e,
 		limiter: rate.NewLimiter(rate.Limit(perSecond), burst),
 		breaker: &breaker{},
-		enabled: enabled,
-	})
+	}
+	g.enabled.Store(enabled)
+	r.sources = append(r.sources, g)
+}
+
+// SetEnabled bật hoặc tắt một nguồn lúc chạy. Trả về false nếu không có nguồn đó.
+func (r *Registry) SetEnabled(name string, enabled bool) bool {
+	for _, s := range r.sources {
+		if s.Name() == name {
+			s.enabled.Store(enabled)
+			return true
+		}
+	}
+	return false
+}
+
+// IsEnabled cho biết một nguồn có đang hoạt động không.
+func (r *Registry) IsEnabled(name string) bool {
+	for _, s := range r.sources {
+		if s.Name() == name {
+			return s.enabled.Load()
+		}
+	}
+	return false
+}
+
+// Has cho biết một nguồn đã được đăng ký chưa.
+func (r *Registry) Has(name string) bool {
+	for _, s := range r.sources {
+		if s.Name() == name {
+			return true
+		}
+	}
+	return false
 }
 
 // Sources trả về danh sách nguồn đã đăng ký.

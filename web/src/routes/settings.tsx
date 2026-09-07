@@ -4,11 +4,12 @@ import {
   useJob,
   useRefreshLookup,
   useSettings,
+  useUpdateAnalysis,
   useUpdateLifecycle,
   useUpdateProtectList,
 } from '@/api/hooks';
-import type { LookupTable, SystemInfo } from '@/api/types';
-import { Field, TextInput, Textarea } from '@/components/ui/form';
+import type { AnalysisSettings, LookupTable, SystemInfo } from '@/api/types';
+import { Checkbox, Field, TextInput, Textarea } from '@/components/ui/form';
 import { Button, Card, ErrorState, Spinner, cx } from '@/components/ui/primitives';
 import { formatBytes, formatNumber, formatRelative } from '@/lib/format';
 
@@ -30,6 +31,7 @@ export function SettingsScreen() {
     <div className="space-y-3">
       <ProtectSection hard={settings.data.protect.hard} soft={settings.data.protect.soft} />
       <LifecycleSection lifecycle={settings.data.lifecycle} />
+      <AnalysisSection analysis={settings.data.analysis} />
       <LookupSection tables={settings.data.lookup_tables} />
       <SystemSection system={settings.data.system} />
     </div>
@@ -204,6 +206,77 @@ function LifecycleSection({ lifecycle }: { lifecycle: Lifecycle }) {
         <div className="mt-3">
           <ErrorState error={update.error} />
         </div>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * Công tắc cho nguồn phân tích chạm trực tiếp ra ngoài.
+ *
+ * Tách riêng khỏi các mục khác vì nó có hệ quả về quyền riêng tư: bật lên nghĩa là
+ * máy chủ sẽ tự đi gõ cửa những tên miền thấy trong mạng, và các máy chủ đó biết
+ * được điều đó.
+ */
+function AnalysisSection({ analysis }: { analysis: AnalysisSettings }) {
+  const update = useUpdateAnalysis();
+  const locked = !analysis.external_enabled;
+
+  return (
+    <Card title="Phân tích ngoài">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0 max-w-2xl">
+          <label className="flex items-start gap-2.5">
+            <Checkbox
+              checked={analysis.http_enabled}
+              disabled={locked || update.isPending}
+              onChange={(e) => update.mutate({ http_enabled: e.target.checked })}
+              className="mt-0.5"
+            />
+            <span>
+              <span className="text-sm font-medium">Phân tích header và HTML của trang gốc</span>
+              <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">
+                Tải trang gốc của domain để tìm dấu hiệu điểm thu thập, trang đỗ tên miền,
+                cookie xuyên trang. Không chạy JavaScript, không tải tài nguyên con.
+              </span>
+            </span>
+          </label>
+
+          {/* Hệ quả về quyền riêng tư phải nói trước, không giấu sau một cú bấm. */}
+          <p className="mt-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+            Bật lên nghĩa là máy chủ này sẽ tự truy cập các tên miền thấy trong mạng, và
+            chúng biết được điều đó. Chỉ những domain đang chờ quyết định, có lưu lượng
+            thật, và không nằm trong danh sách bảo vệ mới bị tải.
+          </p>
+
+          {locked && (
+            <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+              Đang bị khóa bởi <code className="font-mono">DNSGUARD_EXTERNAL_ENABLED=false</code> —
+              công tắc đó ở biến môi trường và thắng cấu hình tại đây.
+            </p>
+          )}
+          {update.isError && (
+            <div className="mt-2">
+              <ErrorState error={update.error} />
+            </div>
+          )}
+        </div>
+
+        <dl className="grid shrink-0 grid-cols-[auto_auto] gap-x-3 gap-y-1 text-xs">
+          <dt className="text-slate-500 dark:text-slate-400">Đang hoạt động</dt>
+          <dd className={analysis.http_effective ? 'text-emerald-600 dark:text-emerald-400' : ''}>
+            {analysis.http_effective ? 'có' : 'không'}
+          </dd>
+          <dt className="text-slate-500 dark:text-slate-400">VirusTotal</dt>
+          <dd>{analysis.vt_configured ? 'đã có khóa API' : 'chưa cấu hình'}</dd>
+        </dl>
+      </div>
+
+      {!analysis.vt_configured && (
+        <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+          Đặt <code className="font-mono">DNSGUARD_VT_API_KEY</code> để bật xác thực bằng
+          VirusTotal. Chỉ domain đã đạt từ 3,0 điểm mới được tra, nên bậc miễn phí là đủ.
+        </p>
       )}
     </Card>
   );
