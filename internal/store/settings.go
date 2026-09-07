@@ -10,7 +10,13 @@ import (
 // Khóa cấu hình runtime. Chỉ những thứ sửa được qua giao diện nằm ở đây; đường dẫn
 // và chuỗi kết nối thuộc về biến môi trường và không sửa được lúc chạy.
 const (
-	SettingWeights     = "scoring.weights"
+	SettingWeights = "scoring.weights"
+	// SettingRules là phần luật phân loại do người vận hành thêm vào.
+	//
+	// Chỉ lưu phần thêm, không lưu bản sao đầy đủ: nhờ vậy bản nâng cấp bổ sung tên
+	// miền adtech mới vào danh sách dựng sẵn vẫn có tác dụng thay vì bị một bản chụp
+	// cũ trong CSDL đè lên.
+	SettingRules       = "scoring.rules"
 	SettingSoftAllow   = "protect.soft_allow"
 	SettingStagingDays = "lifecycle.staging_days"
 	SettingConfirmTTL  = "lifecycle.confirm_ttl_days"

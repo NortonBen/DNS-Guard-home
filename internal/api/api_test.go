@@ -16,6 +16,7 @@ import (
 
 	"github.com/benji/dnsguard/internal/auth"
 	"github.com/benji/dnsguard/internal/catalog"
+	"github.com/benji/dnsguard/internal/classify"
 	"github.com/benji/dnsguard/internal/config"
 	"github.com/benji/dnsguard/internal/enrich"
 	"github.com/benji/dnsguard/internal/events"
@@ -794,4 +795,164 @@ func TestPublishSinkNeedsAdmin(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("chưa đăng nhập = %d, muốn 401", resp.StatusCode)
 	}
+}
+
+func TestRulesRejectDangerousEntriesWithReasons(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+
+	resp, body := h.do(http.MethodPut, "/api/v1/scoring/rules", map[string]any{
+		"adtech_asns": map[string]any{
+			"15169": map[string]any{"org": "Google", "category": "ads"},
+		},
+	})
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("ASN trung tính = %d, muốn 422: %s", resp.StatusCode, body)
+	}
+	// Lý do phải nêu tên tổ chức, không chỉ "không hợp lệ": người dùng cần biết vì
+	// sao mục của mình bị từ chối để sửa cho đúng.
+	if !bodyContains(body, "Google") {
+		t.Errorf("lý do không nêu tên tổ chức: %s", body)
+	}
+
+	// Không có gì được lưu lại.
+	var stored classify.Custom
+	found, err := h.store.GetSetting(context.Background(), store.SettingRules, &stored)
+	if err != nil {
+		t.Fatalf("đọc setting: %v", err)
+	}
+	if found && !stored.IsZero() {
+		t.Error("luật bị từ chối vẫn được lưu")
+	}
+}
+
+func TestRulesDryRunDoesNotPersist(t *testing.T) {
+	// Xem trước phải hoàn toàn không có tác dụng phụ: nó là lớp bảo vệ trước khi lưu,
+	// và một lớp bảo vệ tự nó ghi dữ liệu thì không còn là lớp bảo vệ.
+	h := newHarness(t)
+	h.login()
+
+	resp, body := h.do(http.MethodPut, "/api/v1/scoring/rules", map[string]any{
+		"adtech_domains": map[string]string{"quangcaoabc.vn": "ads"},
+		"dry_run":        true,
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("dry run = %d: %s", resp.StatusCode, body)
+	}
+	if !bodyContains(body, `"would_block"`) {
+		t.Errorf("thiếu bảng tác động: %s", body)
+	}
+
+	var stored classify.Custom
+	found, err := h.store.GetSetting(context.Background(), store.SettingRules, &stored)
+	if err != nil {
+		t.Fatalf("đọc setting: %v", err)
+	}
+	if found && !stored.IsZero() {
+		t.Error("dry run đã ghi luật xuống CSDL")
+	}
+}
+
+func TestRulesSaveAndReadBack(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+
+	resp, body := h.do(http.MethodPut, "/api/v1/scoring/rules", map[string]any{
+		"adtech_domains": map[string]string{"QuangCaoABC.VN": "ads"},
+		"keywords":       map[string][]string{"ads": {"quangcao"}},
+		"thresholds":     map[string]int{"spread_high_min": 40},
+	})
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("lưu luật = %d: %s", resp.StatusCode, body)
+	}
+	// Lưu xong phải chấm điểm lại: luật mới không có tác dụng cho tới khi domain
+	// được chấm lại, và để giao diện nói một đằng dữ liệu một nẻo là lỗi tệ hơn.
+	if !bodyContains(body, `"job_id"`) {
+		t.Errorf("không xếp hàng job chấm lại: %s", body)
+	}
+
+	resp, body = h.do(http.MethodGet, "/api/v1/scoring/rules", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("đọc lại = %d: %s", resp.StatusCode, body)
+	}
+	if !bodyContains(body, "quangcao") {
+		t.Errorf("không đọc lại được luật đã lưu: %s", body)
+	}
+	if !bodyContains(body, `"builtin_counts"`) {
+		t.Errorf("thiếu số lượng dựng sẵn để đối chiếu: %s", body)
+	}
+}
+
+func TestRulesActuallyChangeScoring(t *testing.T) {
+	// Vòng khép kín: lưu luật rồi chấm lại thì điểm của domain phải đổi theo. Không
+	// có bước này thì mọi thứ trên có thể xanh trong khi tính năng không làm gì cả.
+	h := newHarness(t)
+	h.login()
+
+	ctx := context.Background()
+	id := seedDomainWithCNAME(t, h, "tracker.trangweb.vn", "edge.quangcaonoidia.vn")
+
+	// Chấm điểm một lượt TRƯỚC khi thêm luật. Không có bước này thì mốc so sánh là 0
+	// của một domain chưa từng được chấm, và mọi lần chấm lại đều làm điểm tăng — test
+	// xanh kể cả khi luật hoàn toàn bị bỏ qua.
+	if _, err := h.srv.worker.Enqueue(ctx, worker.JobRescore, nil); err != nil {
+		t.Fatalf("xếp hàng chấm điểm nền: %v", err)
+	}
+	if err := h.srv.worker.RunPending(ctx); err != nil {
+		t.Fatalf("chạy job nền: %v", err)
+	}
+	before := scoreOf(t, h, id)
+
+	resp, body := h.do(http.MethodPut, "/api/v1/scoring/rules", map[string]any{
+		"adtech_domains": map[string]string{"quangcaonoidia.vn": "ads"},
+	})
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("lưu luật = %d: %s", resp.StatusCode, body)
+	}
+
+	// Chạy job chấm lại đồng bộ thay vì đợi bộ lập lịch nền.
+	if err := h.srv.worker.RunPending(ctx); err != nil {
+		t.Fatalf("chạy job: %v", err)
+	}
+
+	after := scoreOf(t, h, id)
+	if after <= before {
+		t.Errorf("điểm sau = %v, trước = %v — luật tự đặt không đổi được kết quả chấm điểm",
+			after, before)
+	}
+}
+
+// seedDomainWithCNAME tạo một domain kèm chuỗi CNAME đã làm giàu.
+func seedDomainWithCNAME(t *testing.T, h *harness, name, cname string) int64 {
+	t.Helper()
+	ctx := context.Background()
+	now := store.Now()
+
+	res, err := h.store.Writer().ExecContext(ctx, `
+		INSERT INTO domains (name, name_rev, etld1, status, origin,
+		                     first_seen, last_seen, created_at, updated_at)
+		VALUES (?, ?, ?, 'new', 'discovered', ?, ?, ?, ?)`,
+		name, name, "trangweb.vn", now, now, now, now)
+	if err != nil {
+		t.Fatalf("tạo domain: %v", err)
+	}
+	id, _ := res.LastInsertId()
+
+	if _, err := h.store.Writer().ExecContext(ctx, `
+		INSERT INTO domain_facts (domain_id, source, data, fetched_at, expires_at)
+		VALUES (?, 'dns', ?, ?, ?)`,
+		id, `{"cname_chain":["`+cname+`"]}`, now, store.TimeAt(time.Now().Add(24*time.Hour))); err != nil {
+		t.Fatalf("ghi facts: %v", err)
+	}
+	return id
+}
+
+func scoreOf(t *testing.T, h *harness, id int64) float64 {
+	t.Helper()
+	var score float64
+	if err := h.store.Reader().QueryRow(
+		`SELECT coalesce(score, 0) FROM domains WHERE id = ?`, id).Scan(&score); err != nil {
+		t.Fatalf("đọc điểm: %v", err)
+	}
+	return score
 }

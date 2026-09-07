@@ -8,6 +8,7 @@ import {
   useWeights,
 } from '@/api/hooks';
 import type { WeightImpact } from '@/api/types';
+import { RulesEditor } from '@/components/domain/rules-editor';
 import { Button, Card, ErrorState, Spinner, TableScroll, cx } from '@/components/ui/primitives';
 import { formatNumber, formatWeight } from '@/lib/format';
 
@@ -233,6 +234,8 @@ export function CategoriesScreen() {
           </>
         )}
       </Card>
+
+      <RulesEditor />
     </div>
   );
 }

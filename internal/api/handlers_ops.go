@@ -151,8 +151,16 @@ func (s *Server) handleUpdateWeights(w http.ResponseWriter, r *http.Request) {
 		proposed[item.Kind] = item.Weight
 	}
 
+	rules, err := s.currentRules(ctx)
+	if err != nil {
+		fail(w, s.log, err)
+		return
+	}
+
 	if req.DryRun {
-		impact, err := s.simulate(ctx, current, proposed)
+		impact, err := s.simulate(ctx,
+			scoringConfig{weights: current, rules: rules},
+			scoringConfig{weights: proposed, rules: rules})
 		if err != nil {
 			fail(w, s.log, err)
 			return
@@ -173,8 +181,20 @@ func (s *Server) handleUpdateWeights(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{"job_id": jobID})
 }
 
-// simulate tính tác động của bộ trọng số mới mà không ghi gì.
-func (s *Server) simulate(ctx context.Context, current, proposed classify.Weights) (map[string]any, error) {
+// scoringConfig là một cấu hình chấm điểm hoàn chỉnh: trọng số cộng bộ luật.
+//
+// Gộp hai thứ lại vì chúng vào cùng một hàm và luôn đi cùng nhau khi so sánh trước
+// với sau.
+type scoringConfig struct {
+	weights classify.Weights
+	rules   classify.Rules
+}
+
+// simulate tính tác động của một cấu hình chấm điểm mới mà không ghi gì.
+//
+// Chính xác tuyệt đối chứ không phải ước lượng: ScoreWith là hàm thuần túy, nên chạy
+// nó với cấu hình sắp lưu cho đúng kết quả sẽ xảy ra sau khi lưu.
+func (s *Server) simulate(ctx context.Context, current, proposed scoringConfig) (map[string]any, error) {
 	candidates, err := s.store.ScoringCandidates(ctx, 50000)
 	if err != nil {
 		return nil, err
@@ -185,41 +205,33 @@ func (s *Server) simulate(ctx context.Context, current, proposed classify.Weight
 		return nil, err
 	}
 
+	// Mẫu giới hạn hai mươi tên, nhưng số đếm là toàn bộ: người dùng cần con số thật
+	// để quyết định, còn danh sách chỉ để nhận ra kiểu domain nào bị ảnh hưởng.
+	const sampleSize = 20
+
 	var wouldBlock, wouldUnblock []string
-	unchanged := 0
+	var countBlock, countUnblock, unchanged int
 
 	for _, c := range candidates {
-		before := classify.Score(c.Domain, c.Facts, current)
-		after := classify.Score(c.Domain, c.Facts, proposed)
+		before := classify.ScoreWith(c.Domain, c.Facts, current.weights, current.rules)
+		after := classify.ScoreWith(c.Domain, c.Facts, proposed.weights, proposed.rules)
 
 		wasOver := before.Score >= thresholds[string(before.Category)]
 		isOver := after.Score >= thresholds[string(after.Category)]
 
 		switch {
 		case !wasOver && isOver:
-			if len(wouldBlock) < 20 {
+			countBlock++
+			if len(wouldBlock) < sampleSize {
 				wouldBlock = append(wouldBlock, c.Domain.Name)
 			}
 		case wasOver && !isOver:
-			if len(wouldUnblock) < 20 {
+			countUnblock++
+			if len(wouldUnblock) < sampleSize {
 				wouldUnblock = append(wouldUnblock, c.Domain.Name)
 			}
 		default:
 			unchanged++
-			continue
-		}
-	}
-
-	countBlock, countUnblock := 0, 0
-	for _, c := range candidates {
-		before := classify.Score(c.Domain, c.Facts, current)
-		after := classify.Score(c.Domain, c.Facts, proposed)
-		wasOver := before.Score >= thresholds[string(before.Category)]
-		isOver := after.Score >= thresholds[string(after.Category)]
-		if !wasOver && isOver {
-			countBlock++
-		} else if wasOver && !isOver {
-			countUnblock++
 		}
 	}
 
@@ -227,6 +239,7 @@ func (s *Server) simulate(ctx context.Context, current, proposed classify.Weight
 		"would_block":   map[string]any{"count": countBlock, "sample": orEmpty(wouldBlock)},
 		"would_unblock": map[string]any{"count": countUnblock, "sample": orEmpty(wouldUnblock)},
 		"unchanged":     unchanged,
+		"evaluated":     len(candidates),
 	}, nil
 }
 
@@ -576,4 +589,161 @@ func (s *Server) handleStatsResources(w http.ResponseWriter, r *http.Request) {
 		"summary":        summary,
 		"points":         orEmpty(points),
 	})
+}
+
+// currentRules đọc luật tự đặt rồi gộp lên luật dựng sẵn.
+func (s *Server) currentRules(ctx context.Context) (classify.Rules, error) {
+	custom, err := s.customRules(ctx)
+	if err != nil {
+		return classify.Rules{}, err
+	}
+	return classify.Merge(custom), nil
+}
+
+// customRules đọc riêng phần tự đặt, dùng khi cần hiển thị lại đúng thứ người dùng
+// đã nhập chứ không phải bộ luật đã gộp.
+func (s *Server) customRules(ctx context.Context) (classify.Custom, error) {
+	var custom classify.Custom
+	if _, err := s.store.GetSetting(ctx, store.SettingRules, &custom); err != nil {
+		return classify.Custom{}, err
+	}
+	return custom, nil
+}
+
+// handleGetRules trả về luật tự đặt kèm phần dựng sẵn để giao diện đối chiếu.
+func (s *Server) handleGetRules(w http.ResponseWriter, r *http.Request) {
+	custom, err := s.customRules(r.Context())
+	if err != nil {
+		fail(w, s.log, err)
+		return
+	}
+
+	defaults := classify.DefaultRules()
+	writeJSON(w, http.StatusOK, map[string]any{
+		"custom": map[string]any{
+			"adtech_domains": orEmptyMap(custom.AdtechDomains),
+			"adtech_asns":    orEmptyASNs(custom.AdtechASNs),
+			"shared_cdn":     orEmpty(custom.SharedCDN),
+			"keywords":       orEmptyKeywords(custom.Keywords),
+			"thresholds":     thresholdsOr(custom.Thresholds, classify.DefaultThresholds()),
+		},
+		// Số lượng dựng sẵn chứ không phải toàn bộ nội dung: giao diện chỉ cần cho
+		// biết "67 tên miền dựng sẵn, bạn thêm 3", còn danh sách đầy đủ vừa dài vừa
+		// không sửa được nên hiện ra chỉ làm rối.
+		"builtin_counts": map[string]int{
+			"adtech_domains": len(defaults.AdtechDomains),
+			"adtech_asns":    len(defaults.AdtechASNs),
+			"shared_cdn":     len(defaults.SharedCDN),
+			"keywords":       countKeywords(defaults.Keywords),
+			"neutral_asns":   classify.NeutralASNCount(),
+		},
+		"default_thresholds": classify.DefaultThresholds(),
+	})
+}
+
+type updateRulesRequest struct {
+	classify.Custom
+	DryRun bool `json:"dry_run"`
+}
+
+// handleUpdateRules sửa luật phân loại, có chế độ tính trước tác động.
+//
+// Cùng luồng bắt buộc như đổi trọng số, và ở đây còn quan trọng hơn: cname_adtech
+// mang trọng số 6,0 trong khi ngưỡng ads là 5,5, nghĩa là một tên miền thêm nhầm vào
+// danh sách adtech đủ để chặn một domain mà không cần bằng chứng nào khác. Với danh
+// sách nằm trong mã nguồn thì việc đó qua được review; với một ô nhập trên giao diện
+// thì bảng xem trước là lớp bảo vệ duy nhất.
+func (s *Server) handleUpdateRules(w http.ResponseWriter, r *http.Request) {
+	sess, _ := sessionFrom(r.Context())
+	ctx := r.Context()
+
+	var req updateRulesRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256*1024)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidInput, "Dữ liệu không hợp lệ", nil)
+		return
+	}
+
+	if errs := req.Custom.Validate(); len(errs) > 0 {
+		writeError(w, http.StatusUnprocessableEntity, CodeValidation,
+			"Có mục không hợp lệ", map[string]any{"rejected": errs})
+		return
+	}
+
+	weights, err := s.currentWeights(ctx)
+	if err != nil {
+		fail(w, s.log, err)
+		return
+	}
+	currentRules, err := s.currentRules(ctx)
+	if err != nil {
+		fail(w, s.log, err)
+		return
+	}
+	proposedRules := classify.Merge(req.Custom)
+
+	if req.DryRun {
+		impact, err := s.simulate(ctx,
+			scoringConfig{weights: weights, rules: currentRules},
+			scoringConfig{weights: weights, rules: proposedRules})
+		if err != nil {
+			fail(w, s.log, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"impact": impact})
+		return
+	}
+
+	if err := s.store.SetSetting(ctx, store.SettingRules, req.Custom, sess.Username); err != nil {
+		fail(w, s.log, err)
+		return
+	}
+	s.log.Info("cập nhật luật phân loại",
+		"domains", len(req.Custom.AdtechDomains), "asns", len(req.Custom.AdtechASNs),
+		"keywords", countKeywords(req.Custom.Keywords), "by", sess.Username)
+
+	// Chấm điểm lại toàn bộ: luật mới chỉ có tác dụng khi domain được chấm lại, và
+	// bắt người dùng bấm thêm một nút nữa chỉ tạo ra khoảng thời gian mà giao diện
+	// nói một đằng còn dữ liệu là một nẻo.
+	jobID, err := s.worker.Enqueue(ctx, worker.JobRescore, nil)
+	if err != nil {
+		fail(w, s.log, err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, map[string]any{"job_id": jobID})
+}
+
+func countKeywords(groups map[classify.Category][]string) int {
+	n := 0
+	for _, words := range groups {
+		n += len(words)
+	}
+	return n
+}
+
+func orEmptyMap(m map[string]classify.Category) map[string]classify.Category {
+	if m == nil {
+		return map[string]classify.Category{}
+	}
+	return m
+}
+
+func orEmptyASNs(m map[int]classify.ASNInfo) map[int]classify.ASNInfo {
+	if m == nil {
+		return map[int]classify.ASNInfo{}
+	}
+	return m
+}
+
+func orEmptyKeywords(m map[classify.Category][]string) map[classify.Category][]string {
+	if m == nil {
+		return map[classify.Category][]string{}
+	}
+	return m
+}
+
+func thresholdsOr(t *classify.Thresholds, fallback classify.Thresholds) classify.Thresholds {
+	if t == nil {
+		return fallback
+	}
+	return classify.MergeThresholds(fallback, *t)
 }

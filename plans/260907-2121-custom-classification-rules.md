@@ -1,6 +1,6 @@
 # Rule phân loại domain do người dùng tự đặt
 
-Trạng thái: nghiên cứu · Ngày 2026-09-07
+Trạng thái: **đã cài đặt theo phương án B** · Nghiên cứu 2026-09-07, cài đặt 2026-09-07
 
 ## 1. Hiện trạng
 
@@ -59,7 +59,7 @@ lưu. Cộng thêm giai đoạn chờ bảy ngày vốn đã có, nên vẫn cò
 
 **C. Cả hai.** Trọng số thấp hơn *và* bắt buộc xem trước.
 
-Tôi nghiêng về **B**. Lý do: xem trước tác động là cơ chế đã có, đã hoạt động, và
+**Đã chọn B.** Lý do: xem trước tác động là cơ chế đã có, đã hoạt động, và
 chính xác tuyệt đối vì hàm chấm điểm thuần túy. Thêm một loại tín hiệu song song
 làm bảng tín hiệu khó đọc hơn, mà người vận hành thêm `quangcaoabc.vn` vào danh sách
 thường biết rõ hơn bất kỳ danh sách mặc định nào.
@@ -105,3 +105,31 @@ bắt buộc: sửa → **Xem tác động** → mới bật được **Áp dụ
 8. Test: mỗi luật kiểm tra bị từ chối đúng, và luật tự đặt thật sự đổi kết quả chấm điểm
 
 Ước lượng: khoảng 600 dòng Go, 250 dòng TypeScript, cộng test.
+
+
+## 6. Kết quả cài đặt
+
+Làm theo phương án B: dùng chung loại tín hiệu, bắt buộc xem trước tác động.
+
+| Việc | Ở đâu |
+|---|---|
+| Kiểu `Rules`, `Custom`, `DefaultRules`, `Merge` | `internal/classify/rules.go` |
+| `ScoreWith(d, f, w, r)`; `Score` giữ nguyên chữ ký | `internal/classify/score.go` |
+| Tra cứu thành phương thức của `Rules` | `internal/classify/rules.go`, `signals.go` |
+| `GET/PUT /scoring/rules`, dùng lại `dry_run` | `internal/api/handlers_ops.go` |
+| Kiểm tra đầu vào theo §4 | `Custom.Validate` |
+| Giao diện trong màn Phân loại & trọng số | `web/src/components/domain/rules-editor.tsx` |
+
+Khác kế hoạch ở ba chỗ:
+
+- **Kiểm tra trả về mọi lỗi cùng lúc** thay vì dừng ở lỗi đầu. Người dùng dán vào một
+  danh sách dài thì cần biết hết vấn đề trong một lần.
+- **Lưu xong tự xếp hàng chấm điểm lại.** Kế hoạch không nói tới; nhưng luật mới chỉ
+  có tác dụng khi domain được chấm lại, và để giao diện nói một đằng dữ liệu một nẻo
+  là lỗi tệ hơn một job chạy nền.
+- **Gộp `adtechASN` vào `ASNInfo`** — hai kiểu giống hệt nhau, giữ cả hai là thừa.
+
+Một phát hiện trong lúc làm: lớp bảo vệ `high_rank` **−8,0** thắng được `cname_adtech`
+**+6,0**, nên một tên miền top Tranco thêm nhầm vẫn không bị chặn (điểm ra −2, nhãn
+`cdn`). Nhưng lớp đó đòi phải có bảng Tranco; chưa tải bảng thì bảng xem trước là lớp
+bảo vệ duy nhất. Cả hai đều có test khẳng định.

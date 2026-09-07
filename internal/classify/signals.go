@@ -11,14 +11,14 @@ import (
 
 // infraSignals — nhóm mạnh nhất. Hạ tầng không nói dối: tên miền có thể trông vô
 // hại, nhưng CNAME phải trỏ về đâu đó thật.
-func infraSignals(d Domain, f Facts, w Weights) []Signal {
+func infraSignals(d Domain, f Facts, w Weights, r Rules) []Signal {
 	var out []Signal
 
 	// CNAME cloaking là kỹ thuật né blocklist phổ biến nhất hiện nay. Nhà quảng cáo
 	// cho khách hàng trỏ một subdomain trông như của chính họ, nhưng bản ghi CNAME
 	// dẫn về hạ tầng adtech. Chỉ phân giải động mới thấy đích thật.
 	for _, hop := range f.CNAMEChain {
-		if _, suffix, ok := hasAdtechSuffix(hop); ok {
+		if _, suffix, ok := r.adtechSuffix(hop); ok {
 			out = append(out, Signal{
 				Kind:   KindCNAMEAdtech,
 				Weight: w.Get(KindCNAMEAdtech),
@@ -36,21 +36,17 @@ func infraSignals(d Domain, f Facts, w Weights) []Signal {
 		})
 	}
 
-	if f.ASN != 0 {
-		if _, neutral := neutralASNs[f.ASN]; !neutral {
-			if info, ok := adtechASNs[f.ASN]; ok {
-				out = append(out, Signal{
-					Kind:   KindASNAdtech,
-					Weight: w.Get(KindASNAdtech),
-					Detail: map[string]any{"asn": f.ASN, "org": info.Org},
-				})
-			}
-		}
+	if info, ok := r.asnInfo(f.ASN); ok {
+		out = append(out, Signal{
+			Kind:   KindASNAdtech,
+			Weight: w.Get(KindASNAdtech),
+			Detail: map[string]any{"asn": f.ASN, "org": info.Org},
+		})
 	}
 
 	for _, san := range f.CertSANs {
 		san = strings.TrimPrefix(san, "*.")
-		if _, suffix, ok := hasAdtechSuffix(san); ok {
+		if _, suffix, ok := r.adtechSuffix(san); ok {
 			out = append(out, Signal{
 				Kind:   KindCertAdtech,
 				Weight: w.Get(KindCertAdtech),
@@ -64,12 +60,12 @@ func infraSignals(d Domain, f Facts, w Weights) []Signal {
 }
 
 // lexicalSignals — bằng chứng từ chính tên miền.
-func lexicalSignals(d Domain, w Weights) []Signal {
+func lexicalSignals(d Domain, w Weights, r Rules) []Signal {
 	var out []Signal
 
 	// Chỉ tính một lần dù khớp nhiều từ khóa. Nếu không, một domain như
 	// "ads-tracking-analytics.com" được cộng ba lần cho cùng một bằng chứng.
-	if cat, word, ok := matchKeyword(d.Name); ok {
+	if cat, word, ok := r.matchKeyword(d.Name); ok {
 		out = append(out, Signal{
 			Kind:   KindKeyword,
 			Weight: w.Get(KindKeyword),
@@ -102,7 +98,7 @@ func lexicalSignals(d Domain, w Weights) []Signal {
 //
 // Nhóm này chỉ có nghĩa khi query log giữ được IP của từng client. Kiến trúc mirror
 // gói tin giữ được IP thật, nên các tín hiệu này dùng được.
-func behaviorSignals(d Domain, w Weights) []Signal {
+func behaviorSignals(d Domain, w Weights, r Rules) []Signal {
 	var out []Signal
 
 	switch {
@@ -120,7 +116,7 @@ func behaviorSignals(d Domain, w Weights) []Signal {
 		})
 	}
 
-	if d.ClientCount >= fanOutMinClients && d.ThirdPartyRatio > fanOutMinRatio {
+	if d.ClientCount >= r.Thresholds.FanOutMinClients && d.ThirdPartyRatio > fanOutMinRatio {
 		out = append(out, Signal{
 			Kind:   KindFanOut,
 			Weight: w.Get(KindFanOut),
@@ -130,7 +126,7 @@ func behaviorSignals(d Domain, w Weights) []Signal {
 
 	// Con người tạo ra khoảng cách truy vấn không đều; phần mềm báo cáo định kỳ thì
 	// đều một cách máy móc. Cần đủ số mẫu để hệ số biến thiên có nghĩa.
-	if d.QueryCount >= beaconMinQueries && d.QueryIntervalCV > 0 && d.QueryIntervalCV < beaconMaxCV {
+	if d.QueryCount >= int64(r.Thresholds.BeaconMinQueries) && d.QueryIntervalCV > 0 && d.QueryIntervalCV < beaconMaxCV {
 		out = append(out, Signal{
 			Kind:   KindBeacon,
 			Weight: w.Get(KindBeacon),
@@ -146,17 +142,17 @@ func behaviorSignals(d Domain, w Weights) []Signal {
 // Máy chủ quảng cáo sinh subdomain theo chiến dịch, theo khách hàng, theo phiên —
 // hàng trăm cái dưới một gốc. Trang nội dung hiếm khi vượt vài chục. Nhóm này không
 // cần IP client nên hoạt động ở mọi kiến trúc thu thập.
-func structureSignals(d Domain, f Facts, w Weights) []Signal {
+func structureSignals(d Domain, f Facts, w Weights, r Rules) []Signal {
 	var out []Signal
 
 	switch {
-	case d.SubdomainCount >= spreadHighMin:
+	case d.SubdomainCount >= r.Thresholds.SpreadHighMin:
 		out = append(out, Signal{
 			Kind:   KindSpreadHigh,
 			Weight: w.Get(KindSpreadHigh),
 			Detail: map[string]any{"subdomains": d.SubdomainCount, "etld1": d.ETLD1},
 		})
-	case d.SubdomainCount >= spreadMidMin:
+	case d.SubdomainCount >= r.Thresholds.SpreadMidMin:
 		out = append(out, Signal{
 			Kind:   KindSpreadMid,
 			Weight: w.Get(KindSpreadMid),
@@ -176,7 +172,7 @@ func structureSignals(d Domain, f Facts, w Weights) []Signal {
 }
 
 // negativeSignals — trọng số âm, tồn tại để kéo domain vô hại ra khỏi vùng nguy hiểm.
-func negativeSignals(d Domain, f Facts, w Weights, infra []Signal) []Signal {
+func negativeSignals(d Domain, f Facts, w Weights, r Rules, infra []Signal) []Signal {
 	var out []Signal
 
 	// Trọng số này lớn hơn mọi tín hiệu dương đơn lẻ, và đó là chủ ý: nếu một domain
@@ -184,7 +180,7 @@ func negativeSignals(d Domain, f Facts, w Weights, infra []Signal) []Signal {
 	// phải domain đó là quảng cáo. Vẫn có ngoại lệ — doubleclick.net xếp hạng rất
 	// cao — nên nó là điểm âm chứ không phải chặn tuyệt đối, và các tín hiệu hạ tầng
 	// cộng dồn vẫn có thể vượt qua.
-	if f.TrancoRank > 0 && f.TrancoRank <= highRankMax {
+	if f.TrancoRank > 0 && f.TrancoRank <= r.Thresholds.HighRankMax {
 		out = append(out, Signal{
 			Kind:   KindHighRank,
 			Weight: w.Get(KindHighRank),
@@ -201,7 +197,7 @@ func negativeSignals(d Domain, f Facts, w Weights, infra []Signal) []Signal {
 	}
 
 	for _, hop := range append([]string{d.Name}, f.CNAMEChain...) {
-		if suffix, ok := isSharedCDN(hop); ok {
+		if suffix, ok := r.sharedCDN(hop); ok {
 			out = append(out, Signal{
 				Kind:   KindSharedCDN,
 				Weight: w.Get(KindSharedCDN),
@@ -216,10 +212,10 @@ func negativeSignals(d Domain, f Facts, w Weights, infra []Signal) []Signal {
 
 // matchKeyword tìm từ khóa đầu tiên khớp, ưu tiên nhóm theo thứ tự xác định để kết
 // quả không phụ thuộc thứ tự duyệt map.
-func matchKeyword(name string) (Category, string, bool) {
+func (r Rules) matchKeyword(name string) (Category, string, bool) {
 	name = strings.ToLower(name)
 	for _, cat := range []Category{CategoryAds, CategoryTracking, CategoryTelemetry} {
-		for _, kw := range keywordGroups[cat] {
+		for _, kw := range r.Keywords[cat] {
 			if strings.Contains(name, kw) {
 				return cat, kw, true
 			}
@@ -263,7 +259,7 @@ func round2(f float64) float64 { return math.Round(f*100) / 100 }
 // mã quảng cáo vẫn là nội dung. Vì thế nhóm này cố ý không đếm số script bên thứ ba
 // và không dò dấu vân tay gtag/fbq/adsbygoogle — chúng dính vào gần như mọi trang có
 // quảng cáo, và dùng chúng là cách nhanh nhất phá vỡ mục tiêu precision.
-func httpSignals(f Facts, w Weights) []Signal {
+func httpSignals(f Facts, w Weights, r Rules) []Signal {
 	h := f.HTTP
 	if !h.Fetched {
 		return nil
@@ -297,7 +293,7 @@ func httpSignals(f Facts, w Weights) []Signal {
 	// trông vô hại nhưng đích thật nằm ở nơi khác.
 	if h.RedirectTo != "" {
 		if host := hostOf(h.RedirectTo); host != "" {
-			if _, matched, ok := hasAdtechSuffix(host); ok {
+			if _, matched, ok := r.adtechSuffix(host); ok {
 				out = append(out, Signal{
 					Kind: KindHTTPRedirectAdtech, Weight: w.Get(KindHTTPRedirectAdtech),
 					Detail: map[string]any{"location": h.RedirectTo, "matched": matched},
@@ -362,7 +358,7 @@ func httpSignals(f Facts, w Weights) []Signal {
 }
 
 // virusTotalSignals — kết luận tổng hợp của nhiều engine diệt mã độc.
-func virusTotalSignals(f Facts, w Weights) []Signal {
+func virusTotalSignals(f Facts, w Weights, r Rules) []Signal {
 	vt := f.VT
 	if !vt.Checked || !vt.Known {
 		return nil
@@ -370,7 +366,7 @@ func virusTotalSignals(f Facts, w Weights) []Signal {
 
 	// Ngưỡng ba engine chứ không phải một: một engine đơn lẻ báo động là nhiễu nổi
 	// tiếng của VirusTotal. Ba engine độc lập đồng ý mới là bằng chứng.
-	if vt.Malicious >= vtMaliciousMinEngines {
+	if vt.Malicious >= r.Thresholds.VTMaliciousMinEngines {
 		return []Signal{{
 			Kind: KindVTMalicious, Weight: w.Get(KindVTMalicious),
 			Detail: map[string]any{"malicious": vt.Malicious, "suspicious": vt.Suspicious},

@@ -397,6 +397,61 @@ Với `dry_run: true` (FR-3.6), tính lại điểm trong bộ nhớ và trả v
 UI **phải** hiển thị màn hình này trước khi cho phép lưu. Đổi trọng số mà không xem
 tác động là cách nhanh nhất để chặn nhầm hàng loạt.
 
+### `GET /scoring/rules`
+
+Luật phân loại do người vận hành tự đặt, kèm số lượng mục dựng sẵn để giao diện đối
+chiếu ("67 tên miền sẵn có, bạn thêm 3").
+
+```json
+{
+  "custom": {
+    "adtech_domains": {"quangcaoabc.vn": "ads"},
+    "adtech_asns": {"131429": {"org": "…", "category": "ads"}},
+    "shared_cdn": ["cdn-noi-bo.vn"],
+    "keywords": {"ads": ["quangcao"]},
+    "thresholds": {"spread_high_min": 40, "…": 0}
+  },
+  "builtin_counts": {"adtech_domains": 67, "adtech_asns": 13,
+                     "shared_cdn": 19, "keywords": 30, "neutral_asns": 13},
+  "default_thresholds": {"…": 0}
+}
+```
+
+### `PUT /scoring/rules`
+
+Nhận cùng cấu trúc như `custom` ở trên, cộng `dry_run`. Cùng luồng bắt buộc như đổi
+trọng số: `dry_run: true` trả về bảng tác động, `dry_run: false` mới lưu và xếp hàng
+chấm điểm lại toàn bộ.
+
+Ở đây bảng xem trước quan trọng hơn cả trường hợp trọng số: `cname_adtech` mang **+6,0**
+trong khi ngưỡng `ads` là **5,5**, nghĩa là một tên miền thêm nhầm đủ để chặn một domain
+mà không cần bằng chứng nào khác.
+
+**Chỉ thêm, không bớt.** Luật lưu ở đây gộp *lên trên* danh sách dựng sẵn chứ không thay
+thế nó. Nhờ vậy bản nâng cấp bổ sung tên miền adtech mới vẫn có tác dụng, và không ai
+xóa nhầm được lớp bảo vệ dựng sẵn.
+
+Kiểm tra đầu vào từ chối, kèm lý do đọc được cho **từng mục** thay vì một câu chung:
+
+| Từ chối | Vì sao |
+|---|---|
+| ASN nằm trong danh sách trung tính | Google chứa cả doubleclick lẫn google.com; đánh dấu adtech là chặn nửa Internet |
+| Tên miền trong danh sách bảo vệ cứng | Danh sách đó chỉ sửa được qua pull request |
+| Tên miền trùng hậu tố CDN dùng chung | Chặn theo tên miền sẽ chặn nhầm hàng loạt trang không liên quan |
+| Từ khóa dưới 3 ký tự | Khớp theo chuỗi con, nên "ad" bắt luôn `download.microsoft.com` |
+| Ngưỡng ngoài khoảng hợp lệ | Đặt sai không báo lỗi mà chỉ âm thầm làm bộ phân loại sai |
+
+```json
+{"error": {"code": "validation_failed", "message": "Có mục không hợp lệ",
+  "details": {"rejected": [
+    {"field": "adtech_asns", "value": "15169",
+     "reason": "ASN Google chứa lẫn hạ tầng thường, đánh dấu adtech sẽ chặn nhầm hàng loạt"}
+  ]}}}
+```
+
+Danh sách ASN trung tính và danh sách bảo vệ cứng **không** sửa được qua API. Chúng là
+lớp bảo vệ cuối, và một ô nhập trên giao diện không phải chỗ để gỡ chúng.
+
 ### `POST /scoring/rescore`
 
 Chạy lại chấm điểm toàn bộ. Trả **202** kèm `job_id`, theo dõi qua `/jobs/:id`.

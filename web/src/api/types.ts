@@ -131,6 +131,40 @@ export interface WeightImpact {
   would_block: { count: number; sample: string[] };
   would_unblock: { count: number; sample: string[] };
   unchanged: number;
+  /** Số domain đã đưa vào tính toán; cho biết mẫu rộng tới đâu. */
+  evaluated?: number;
+}
+
+export interface RuleThresholds {
+  fanout_min_clients: number;
+  beacon_min_queries: number;
+  spread_high_min: number;
+  spread_mid_min: number;
+  vt_malicious_min_engines: number;
+  high_rank_max: number;
+}
+
+/** Phần luật do người vận hành thêm vào, gộp lên trên luật dựng sẵn. */
+export interface CustomRules {
+  adtech_domains: Record<string, string>;
+  adtech_asns: Record<string, { org: string; category: string }>;
+  shared_cdn: string[];
+  keywords: Record<string, string[]>;
+  thresholds: RuleThresholds;
+}
+
+export interface RulesResponse {
+  custom: CustomRules;
+  /** Số mục dựng sẵn, để giao diện nói rõ "67 sẵn có, bạn thêm 3". */
+  builtin_counts: Record<string, number>;
+  default_thresholds: RuleThresholds;
+}
+
+/** Một mục bị từ chối kèm lý do đọc được. */
+export interface RuleRejection {
+  field: string;
+  value: string;
+  reason: string;
 }
 
 export interface ListSource {

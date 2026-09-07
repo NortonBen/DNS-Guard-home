@@ -98,6 +98,24 @@ func (r *Runner) workLoop(ctx context.Context) {
 	}
 }
 
+// RunPending chạy hết job đang chờ rồi trả về.
+//
+// Vòng lặp nền chạy theo nhịp hai giây, nên chờ nó là chờ một khoảng không xác định.
+// Hàm này cho phép rút cạn hàng đợi đồng bộ — cần cho test đầu-cuối, và cũng là thứ
+// một lệnh CLI "chạy job ngay" sẽ dùng.
+func (r *Runner) RunPending(ctx context.Context) error {
+	for {
+		job, err := r.store.ClaimJob(ctx)
+		if err != nil {
+			return fmt.Errorf("nhận job: %w", err)
+		}
+		if job == nil {
+			return nil
+		}
+		r.execute(ctx, *job)
+	}
+}
+
 func (r *Runner) execute(ctx context.Context, job store.Job) {
 	start := time.Now()
 	err := r.handle(ctx, job)
@@ -236,6 +254,10 @@ func (r *Runner) runClassify(ctx context.Context, job store.Job) error {
 	if err != nil {
 		return err
 	}
+	rules, err := r.loadRules(ctx)
+	if err != nil {
+		return err
+	}
 
 	limit := 2000
 	if job.Kind == JobRescore {
@@ -249,7 +271,7 @@ func (r *Runner) runClassify(ctx context.Context, job store.Job) error {
 	}
 
 	for i, c := range candidates {
-		result := classify.Score(c.Domain, c.Facts, weights)
+		result := classify.ScoreWith(c.Domain, c.Facts, weights, rules)
 		if err := r.store.SaveScore(ctx, c.ID, result); err != nil {
 			return err
 		}
@@ -283,6 +305,18 @@ func (r *Runner) loadWeights(ctx context.Context) (classify.Weights, error) {
 		return classify.DefaultWeights, nil
 	}
 	return weights, nil
+}
+
+// loadRules đọc luật tự đặt rồi gộp lên luật dựng sẵn.
+//
+// Đọc một lần cho cả lượt chấm chứ không mỗi domain một lần: gộp luật sao chép mấy
+// map dữ liệu, và làm việc đó một trăm nghìn lần là lãng phí thuần túy.
+func (r *Runner) loadRules(ctx context.Context) (classify.Rules, error) {
+	var custom classify.Custom
+	if _, err := r.store.GetSetting(ctx, store.SettingRules, &custom); err != nil {
+		return classify.Rules{}, err
+	}
+	return classify.Merge(custom), nil
 }
 
 // LookupPath trả về nơi lưu bảng tra cứu của một nguồn.

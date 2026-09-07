@@ -6,20 +6,33 @@ package classify
 // trước tác động khi đổi trọng số (FR-3.6) chính xác tuyệt đối chứ không phải ước
 // lượng, và cho phép chạy lại toàn bộ CSDL mà không tra lại dịch vụ ngoài.
 func Score(d Domain, f Facts, w Weights) Result {
+	return ScoreWith(d, f, w, DefaultRules())
+}
+
+// ScoreWith chấm điểm với một bộ luật cụ thể.
+//
+// Tách khỏi Score để luật tự đặt trên giao diện đi vào được mà hàm vẫn thuần túy:
+// mọi thứ ảnh hưởng tới kết quả đều là tham số. Nhờ đó bảng xem trước tác động chạy
+// đúng bộ luật sắp lưu, và con số "sẽ chặn thêm N domain" là kết quả thật chứ không
+// phải ước lượng.
+func ScoreWith(d Domain, f Facts, w Weights, r Rules) Result {
 	if w == nil {
 		w = DefaultWeights
 	}
+	if r.AdtechDomains == nil {
+		r = DefaultRules()
+	}
 
-	infra := infraSignals(d, f, w)
+	infra := infraSignals(d, f, w, r)
 
 	signals := make([]Signal, 0, 8)
 	signals = append(signals, infra...)
-	signals = append(signals, lexicalSignals(d, w)...)
-	signals = append(signals, behaviorSignals(d, w)...)
-	signals = append(signals, structureSignals(d, f, w)...)
-	signals = append(signals, httpSignals(f, w)...)
-	signals = append(signals, virusTotalSignals(f, w)...)
-	signals = append(signals, negativeSignals(d, f, w, infra)...)
+	signals = append(signals, lexicalSignals(d, w, r)...)
+	signals = append(signals, behaviorSignals(d, w, r)...)
+	signals = append(signals, structureSignals(d, f, w, r)...)
+	signals = append(signals, httpSignals(f, w, r)...)
+	signals = append(signals, virusTotalSignals(f, w, r)...)
+	signals = append(signals, negativeSignals(d, f, w, r, infra)...)
 
 	// Không chuẩn hóa điểm về [0,1]. Thang điểm thô dễ suy luận hơn: người vận hành
 	// nhìn 7,5 và thấy ngay đó là 6,0 + 1,5. Một giá trị 0,83 không nói lên điều gì.
@@ -31,7 +44,7 @@ func Score(d Domain, f Facts, w Weights) Result {
 	return Result{
 		Score:      round2(score),
 		Signals:    signals,
-		Category:   categorize(d, f, signals),
+		Category:   categorize(d, f, signals, r),
 		Confidence: confidence(signals),
 	}
 }
@@ -64,7 +77,7 @@ func confidence(signals []Signal) float64 {
 
 // categorize gán nhãn phân loại. Chạy theo thứ tự, dừng ở quy tắc khớp đầu tiên.
 // Thứ tự quan trọng: quy tắc bảo vệ chạy trước, quy tắc chặn chạy sau.
-func categorize(d Domain, f Facts, signals []Signal) Category {
+func categorize(d Domain, f Facts, signals []Signal, r Rules) Category {
 	has := func(kind string) bool {
 		for _, s := range signals {
 			if s.Kind == kind {
@@ -111,14 +124,14 @@ func categorize(d Domain, f Facts, signals []Signal) Category {
 	// 6-7. Đích CNAME hoặc ASN đã biết mang phân loại của chính nó: một domain trỏ
 	//      về eulerian.net là tracking, trỏ về doubleclick.net là ads. Nhãn đi theo
 	//      đích thật chứ không theo tên gọi bề ngoài.
-	if cat, ok := adtechCategory(f); ok {
+	if cat, ok := adtechCategory(f, r); ok {
 		return cat
 	}
 
 	// Từ khóa một mình không đủ để gán nhãn chặn: "analytics.congty.vn" chạy trên
 	// hạ tầng của một ISP trong nước nhiều khả năng là trang phân tích nội bộ, không
 	// phải hạ tầng theo dõi. Cần thêm bằng chứng hạ tầng hoặc hành vi đi kèm.
-	if cat, _, ok := matchKeyword(d.Name); ok && hasCorroboration(signals) {
+	if cat, _, ok := r.matchKeyword(d.Name); ok && hasCorroboration(signals) {
 		return cat
 	}
 
@@ -131,16 +144,14 @@ func categorize(d Domain, f Facts, signals []Signal) Category {
 }
 
 // adtechCategory lấy phân loại từ đích CNAME hoặc từ ASN đã biết.
-func adtechCategory(f Facts) (Category, bool) {
+func adtechCategory(f Facts, r Rules) (Category, bool) {
 	for _, hop := range f.CNAMEChain {
-		if cat, _, ok := hasAdtechSuffix(hop); ok {
+		if cat, _, ok := r.adtechSuffix(hop); ok {
 			return cat, true
 		}
 	}
-	if info, ok := adtechASNs[f.ASN]; ok {
-		if _, neutral := neutralASNs[f.ASN]; !neutral {
-			return info.Category, true
-		}
+	if info, ok := r.asnInfo(f.ASN); ok {
+		return info.Category, true
 	}
 	return "", false
 }

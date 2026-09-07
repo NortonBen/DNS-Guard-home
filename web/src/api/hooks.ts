@@ -31,6 +31,8 @@ import type {
   WeightImpact,
   ResourceSeries,
   PublishSettings,
+  CustomRules,
+  RulesResponse,
 } from './types';
 
 /**
@@ -52,6 +54,7 @@ export const qk = {
   overview: (hours: number) => ['stats', 'overview', hours] as const,
   top: (dimension: string, hours: number) => ['stats', 'top', dimension, hours] as const,
   resources: (hours: number) => ['stats', 'resources', hours] as const,
+  rules: () => ['scoring', 'rules'] as const,
   health: () => ['health'] as const,
   unblockRequests: () => ['unblock-requests'] as const,
   settings: () => ['settings'] as const,
@@ -555,5 +558,46 @@ export function useResources(hours: number) {
       ),
     staleTime: 60_000,
     refetchInterval: 60_000,
+  });
+}
+
+/** Luật phân loại do người vận hành tự đặt. */
+export function useRules() {
+  return useQuery({
+    queryKey: qk.rules(),
+    queryFn: () => api<RulesResponse>('/scoring/rules'),
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * Xem trước tác động của bộ luật mới.
+ *
+ * Bắt buộc trước khi lưu, cùng lý do với trọng số và mạnh hơn: một tên miền thêm nhầm
+ * vào danh sách adtech mang +6,0 trong khi ngưỡng ads là 5,5, tức là tự nó đủ để chặn
+ * một domain mà không cần bằng chứng nào khác.
+ */
+export function usePreviewRules() {
+  return useMutation({
+    mutationFn: (rules: Partial<CustomRules>) =>
+      api<{ impact: WeightImpact }>('/scoring/rules', {
+        method: 'PUT',
+        body: { ...rules, dry_run: true },
+      }),
+  });
+}
+
+export function useApplyRules() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (rules: Partial<CustomRules>) =>
+      api<{ job_id: string }>('/scoring/rules', {
+        method: 'PUT',
+        body: { ...rules, dry_run: false },
+      }),
+    onSuccess: () => {
+      client.invalidateQueries({ queryKey: qk.rules() });
+      client.invalidateQueries({ queryKey: ['domains'] });
+    },
   });
 }

@@ -86,7 +86,7 @@ var adtechDomains = map[string]Category{
 
 // adtechASNs là các ASN mà gần như toàn bộ địa chỉ phục vụ adtech. Danh sách này
 // phải giữ hẹp: xem neutralASNs bên dưới để hiểu vì sao.
-var adtechASNs = map[int]adtechASN{
+var adtechASNs = map[int]ASNInfo{
 	62597:  {"Adform", CategoryAds},
 	394699: {"Criteo", CategoryAds},
 	55569:  {"PubMatic", CategoryAds},
@@ -100,11 +100,6 @@ var adtechASNs = map[int]adtechASN{
 	40977:  {"Quantcast", CategoryTracking},
 	54994:  {"Segment", CategoryTracking},
 	397165: {"Amplitude", CategoryTracking},
-}
-
-type adtechASN struct {
-	Org      string
-	Category Category
 }
 
 // neutralASNs là các ASN chứa lẫn lộn cả hạ tầng adtech lẫn hạ tầng bình thường.
@@ -154,30 +149,6 @@ var keywordGroups = map[Category][]string{
 	CategoryTelemetry: {
 		"telemetry",
 	},
-}
-
-// hasAdtechSuffix cho biết host có nằm dưới một domain adtech đã biết không, và
-// trả về phân loại của domain đó. Khớp theo hậu tố ở ranh giới nhãn: "eulerian.net"
-// bắt "x.eulerian.net" nhưng không bắt "noteulerian.net".
-func hasAdtechSuffix(host string) (Category, string, bool) {
-	host = strings.TrimSuffix(strings.ToLower(host), ".")
-	for suffix, cat := range adtechDomains {
-		if matchesSuffix(host, suffix) {
-			return cat, suffix, true
-		}
-	}
-	return "", "", false
-}
-
-// isSharedCDN cho biết host có thuộc hạ tầng CDN dùng chung không.
-func isSharedCDN(host string) (string, bool) {
-	host = strings.TrimSuffix(strings.ToLower(host), ".")
-	for _, suffix := range sharedCDNSuffixes {
-		if matchesSuffix(host, suffix) {
-			return suffix, true
-		}
-	}
-	return "", false
 }
 
 // matchesSuffix khớp hậu tố ở ranh giới nhãn, không phải khớp chuỗi con.

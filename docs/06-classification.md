@@ -394,3 +394,38 @@ dương (từ blocklist công khai) nhưng tập "không có trong blocklist" l�
 chứ không phải âm. Coi nó là bài toán phân lớp nhị phân thông thường sẽ cho ra mô hình
 sai lệch. Và khi thêm, điểm quy tắc nên là một đặc trưng đầu vào chứ không phải thứ bị
 thay thế — để vẫn giữ được lời giải thích.
+
+## Luật do người vận hành tự đặt
+
+Danh sách tham chiếu trong mã nguồn lấy theo hạ tầng adtech quốc tế. Một mạng ở Việt
+Nam gặp những mạng quảng cáo nội địa mà danh sách đó không biết, nên năm nhóm dữ liệu
+sau bổ sung được qua `PUT /scoring/rules`:
+
+| Nhóm | Sửa được? | Ghi chú |
+|---|---|---|
+| Từ khóa | Có | Giá trị cao nhất, rủi ro thấp nhất — từ khóa một mình không đủ gán nhãn chặn |
+| Tên miền adtech | Có, kèm kiểm tra | Nuôi `cname_adtech` +6,0 và `cert_adtech` +3,0 |
+| ASN adtech | Có, kèm kiểm tra | Từ chối mọi ASN trong danh sách trung tính |
+| CDN dùng chung | Chỉ thêm | Danh sách *bảo vệ*: thêm thì an toàn, bớt thì mất lớp phòng vệ |
+| Ngưỡng tín hiệu | Có, kèm chặn biên | Chỉ những ngưỡng phụ thuộc quy mô mạng |
+| ASN trung tính | **Không** | Gỡ Google khỏi đây là chặn nửa Internet |
+| Danh sách bảo vệ cứng | **Không** | Sửa phải qua pull request |
+
+Mọi thứ nhập vào **gộp lên trên** danh sách dựng sẵn chứ không thay thế. Nhờ vậy bản
+nâng cấp bổ sung mục mới vẫn có tác dụng thay vì bị một bản chụp cũ trong CSDL đè lên.
+
+### Vì sao bảng xem trước là bắt buộc
+
+`cname_adtech` mang **+6,0** trong khi ngưỡng `ads` là **5,5**. Một tên miền thêm nhầm
+vào danh sách adtech tự nó đủ để chặn một domain, không cần bằng chứng nào khác.
+
+Với danh sách nằm trong mã nguồn thì việc đó qua được review. Với một ô nhập trên giao
+diện thì bảng xem trước là lớp bảo vệ tại chỗ — và nó chính xác tuyệt đối chứ không
+phải ước lượng, vì `ScoreWith` là hàm thuần túy: chạy nó với bộ luật sắp lưu cho đúng
+kết quả sẽ xảy ra sau khi lưu.
+
+Lớp thứ hai là `high_rank` (**−8,0**), lớn hơn mọi tín hiệu dương đơn lẻ. Một trang
+trong top Tranco bị chấm điểm cao thì khả năng lớn nhất là quy tắc sai chứ không phải
+trang đó là quảng cáo. Nhưng lớp này **đòi phải có bảng Tranco**: chưa tải bảng thì
+`TrancoRank` bằng 0, `high_rank` không kích hoạt, và bảng xem trước là lớp bảo vệ duy
+nhất còn lại.
