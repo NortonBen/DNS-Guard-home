@@ -3,9 +3,13 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"net/netip"
 	"os"
+	"regexp"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -51,7 +55,11 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 			"staging_days_default":     s.cfg.StagingDays,
 			"confirm_ttl_days_default": s.cfg.ConfirmTTLDays,
 		},
-		"analysis":      s.analysisSettings(ctx),
+		"analysis": s.analysisSettings(ctx),
+		"publish": map[string]any{
+			"sink_address": s.publisher.SinkAddress(ctx),
+			"sink_default": s.cfg.PublishSink,
+		},
 		"lookup_tables": tables,
 		"system":        s.systemInfo(),
 	})
@@ -61,9 +69,10 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 func (s *Server) analysisSettings(ctx context.Context) map[string]any {
 	enabled := s.httpAnalysisEnabled(ctx)
 
-	vtConfigured := false
-	if s.enrichers != nil {
-		vtConfigured = s.enrichers.Has("vt") && s.enrichers.IsEnabled("vt")
+	vtConfigured, vtHint := false, ""
+	if vt := s.virusTotal(); vt != nil {
+		vtConfigured = vt.Configured()
+		vtHint = vt.KeyHint()
 	}
 
 	return map[string]any{
@@ -73,7 +82,34 @@ func (s *Server) analysisSettings(ctx context.Context) map[string]any {
 		"external_enabled": s.cfg.ExternalEnabled,
 		"http_effective":   enabled && s.cfg.ExternalEnabled,
 		"vt_configured":    vtConfigured,
+		// Chỉ bốn ký tự cuối. Khóa đầy đủ không bao giờ rời khỏi máy chủ — kể cả với
+		// người quản trị đã đăng nhập, vì không có việc gì trên giao diện cần tới nó.
+		"vt_key_hint": vtHint,
+		// Khóa đặt bằng biến môi trường thì giao diện không sửa được; nói ra để người
+		// dùng không loay hoay với một ô nhập không có tác dụng.
+		"vt_from_env": s.cfg.VTAPIKey != "" && !s.vtKeyStored(ctx),
 	}
+}
+
+// virusTotal lấy nguồn VirusTotal đang chạy, hoặc nil nếu chưa đăng ký.
+func (s *Server) virusTotal() *enrich.VTEnricher {
+	if s.enrichers == nil {
+		return nil
+	}
+	src, ok := s.enrichers.Get("vt")
+	if !ok {
+		return nil
+	}
+	// Registry bọc nguồn trong lớp giới hạn tốc độ, nên phải hỏi lớp bọc trả về ruột.
+	vt, _ := enrich.Unwrap(src).(*enrich.VTEnricher)
+	return vt
+}
+
+// vtKeyStored cho biết khóa đang dùng đến từ CSDL hay từ biến môi trường.
+func (s *Server) vtKeyStored(ctx context.Context) bool {
+	var stored string
+	ok, err := s.store.GetSetting(ctx, store.SettingVTAPIKey, &stored)
+	return err == nil && ok && stored != ""
 }
 
 // httpAnalysisEnabled đọc công tắc từ settings, lùi về biến môi trường khi chưa đặt.
@@ -87,7 +123,16 @@ func (s *Server) httpAnalysisEnabled(ctx context.Context) bool {
 
 type analysisRequest struct {
 	HTTPEnabled *bool `json:"http_enabled"`
+	// VTAPIKey: con trỏ để phân biệt "không đụng tới" với "xóa đi". Chuỗi rỗng là
+	// lệnh gỡ khóa, còn trường vắng mặt thì giữ nguyên khóa cũ.
+	VTAPIKey *string `json:"vt_api_key"`
 }
+
+// vtKeyPattern là dạng khóa API VirusTotal: sáu mươi tư ký tự hex thường.
+//
+// Kiểm tra dạng trước khi gọi mạng để bắt lỗi dán thiếu ngay lập tức, thay vì chờ
+// một vòng đi về VirusTotal mới báo.
+var vtKeyPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // handleUpdateAnalysis bật hoặc tắt việc phân tích HTTP ngay lúc chạy.
 func (s *Server) handleUpdateAnalysis(w http.ResponseWriter, r *http.Request) {
@@ -121,7 +166,131 @@ func (s *Server) handleUpdateAnalysis(w http.ResponseWriter, r *http.Request) {
 			"enabled", *req.HTTPEnabled, "by", sess.Username)
 	}
 
+	if req.VTAPIKey != nil {
+		if !s.updateVTKey(w, r, strings.TrimSpace(*req.VTAPIKey), sess.Username) {
+			return
+		}
+	}
+
 	writeJSON(w, http.StatusOK, s.analysisSettings(ctx))
+}
+
+// updateVTKey lưu hoặc gỡ khóa API VirusTotal. Trả về false khi đã ghi lỗi ra client.
+//
+// Khóa không bao giờ đi vào log hay phản hồi: nơi duy nhất nó tồn tại là bảng settings
+// và bộ nhớ của tiến trình.
+func (s *Server) updateVTKey(w http.ResponseWriter, r *http.Request, key, actor string) bool {
+	ctx := r.Context()
+
+	vt := s.virusTotal()
+	if vt == nil {
+		writeError(w, http.StatusServiceUnavailable, CodeInternal,
+			"Nguồn VirusTotal chưa được đăng ký", nil)
+		return false
+	}
+
+	if key == "" {
+		if err := s.store.SetSetting(ctx, store.SettingVTAPIKey, "", actor); err != nil {
+			fail(w, s.log, err)
+			return false
+		}
+		// Lùi về khóa ở biến môi trường nếu có: gỡ khóa nhập tay không nên vô hiệu
+		// hóa luôn cấu hình sẵn của máy chủ.
+		vt.SetAPIKey(s.cfg.VTAPIKey)
+		s.enrichers.SetEnabled("vt", s.cfg.ExternalEnabled && vt.Configured())
+		s.log.Info("gỡ khóa API VirusTotal", "by", actor)
+		return true
+	}
+
+	if !vtKeyPattern.MatchString(key) {
+		writeError(w, http.StatusUnprocessableEntity, CodeValidation,
+			"Khóa API VirusTotal phải là 64 ký tự hex thường", nil)
+		return false
+	}
+
+	// Kiểm tra bằng một lượt gọi thật trước khi lưu. Thời gian chờ ngắn hơn timeout
+	// của enricher: người dùng đang đợi trước màn hình, không phải một job nền.
+	verifyCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	defer cancel()
+
+	switch err := vt.VerifyKey(verifyCtx, key); {
+	case err == nil:
+		// hợp lệ, đi tiếp
+	case errors.Is(err, enrich.ErrVTBadKey):
+		writeError(w, http.StatusUnprocessableEntity, CodeValidation,
+			"VirusTotal từ chối khóa này", nil)
+		return false
+	default:
+		// Không gọi được VirusTotal không có nghĩa khóa sai. Nói đúng nguyên nhân,
+		// đừng đổ cho khóa.
+		s.log.Warn("không kiểm tra được khóa VirusTotal", "err", err, "by", actor)
+		writeError(w, http.StatusBadGateway, CodeInternal,
+			"Không kết nối được VirusTotal để kiểm tra khóa", nil)
+		return false
+	}
+
+	if err := s.store.SetSetting(ctx, store.SettingVTAPIKey, key, actor); err != nil {
+		fail(w, s.log, err)
+		return false
+	}
+	vt.SetAPIKey(key)
+	s.enrichers.SetEnabled("vt", s.cfg.ExternalEnabled)
+	s.log.Info("cập nhật khóa API VirusTotal", "by", actor)
+	return true
+}
+
+type publishSettingsRequest struct {
+	SinkAddress string `json:"sink_address"`
+}
+
+// handleUpdatePublish đổi địa chỉ IP mà mọi domain bị chặn trỏ về.
+//
+// Không xuất bản lại ngay: người dùng có thể đang đổi nhiều thứ, và một lần ghi lại
+// toàn bộ danh sách là việc nặng. Địa chỉ mới có tác dụng từ lần xuất bản kế tiếp,
+// và giao diện nói rõ điều đó.
+func (s *Server) handleUpdatePublish(w http.ResponseWriter, r *http.Request) {
+	sess, _ := sessionFrom(r.Context())
+
+	var req publishSettingsRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidInput, "Dữ liệu không hợp lệ", nil)
+		return
+	}
+
+	addr := strings.TrimSpace(req.SinkAddress)
+	if addr == "" {
+		writeError(w, http.StatusUnprocessableEntity, CodeValidation,
+			"Phải nhập địa chỉ IP", nil)
+		return
+	}
+
+	ip, err := netip.ParseAddr(addr)
+	if err != nil {
+		// Tên miền không dùng được: định dạng hosts chỉ nhận địa chỉ IP, và một tên
+		// miền ở cột đầu làm hỏng cả file với phần lớn phần mềm đọc nó.
+		writeError(w, http.StatusUnprocessableEntity, CodeValidation,
+			"Phải là địa chỉ IP hợp lệ, ví dụ 0.0.0.0 hoặc ::", nil)
+		return
+	}
+	if ip.IsMulticast() {
+		writeError(w, http.StatusUnprocessableEntity, CodeValidation,
+			"Địa chỉ multicast không dùng được làm đích chặn", nil)
+		return
+	}
+
+	// Chuẩn hóa: 0.0.0.000 và ::ffff:0.0.0.0 phải lưu về cùng một dạng, nếu không
+	// checksum đổi mỗi lần lưu dù nội dung không đổi.
+	if err := s.store.SetSetting(r.Context(), store.SettingPublishSink,
+		ip.String(), sess.Username); err != nil {
+		fail(w, s.log, err)
+		return
+	}
+	s.log.Info("đổi địa chỉ xuất bản", "sink", ip.String(), "by", sess.Username)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"sink_address": ip.String(),
+		"sink_default": s.cfg.PublishSink,
+	})
 }
 
 // lifecycleDays đọc ngưỡng vòng đời từ settings, lùi về biến môi trường khi chưa đặt.

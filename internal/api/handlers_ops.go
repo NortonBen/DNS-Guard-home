@@ -508,3 +508,72 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	}
 	http.ServeContent(w, r, name, info.ModTime(), f)
 }
+
+// maxResourceSpan là khoảng xem xa nhất cho phép.
+//
+// Bằng đúng hạn giữ mặc định: xin xa hơn thì chỉ nhận về khoảng trống, mà truy vấn
+// vẫn phải quét toàn bảng.
+const maxResourceSpan = 30 * 24 * time.Hour
+
+// handleStatsResources trả về mức tiêu thụ RAM và CPU của chính tiến trình này.
+//
+// Độ rộng khoảng gộp do máy chủ chọn chứ không nhận từ client: người xem quan tâm
+// khoảng thời gian, còn số điểm vẽ ra là chuyện của tầng dưới. Để client tự chọn
+// nghĩa là mở đường cho một truy vấn xin ba mươi ngày ở nhịp mười giây.
+func (s *Server) handleStatsResources(w http.ResponseWriter, r *http.Request) {
+	to := time.Now()
+	from := to.Add(-12 * time.Hour)
+
+	q := r.URL.Query()
+	if raw := q.Get("to"); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, CodeInvalidInput,
+				"Tham số to phải theo định dạng RFC3339", nil)
+			return
+		}
+		to = parsed
+	}
+	if raw := q.Get("from"); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, CodeInvalidInput,
+				"Tham số from phải theo định dạng RFC3339", nil)
+			return
+		}
+		from = parsed
+	}
+
+	if !from.Before(to) {
+		writeError(w, http.StatusBadRequest, CodeInvalidInput,
+			"Mốc from phải trước mốc to", nil)
+		return
+	}
+	if to.Sub(from) > maxResourceSpan {
+		from = to.Add(-maxResourceSpan)
+	}
+
+	bucket := store.BucketSeconds(to.Sub(from))
+	fromAt, toAt := store.TimeAt(from), store.TimeAt(to)
+
+	points, err := s.store.Resources(r.Context(), fromAt, toAt, bucket)
+	if err != nil {
+		fail(w, s.log, err)
+		return
+	}
+	summary, err := s.store.ResourceStats(r.Context(), fromAt, toAt)
+	if err != nil {
+		fail(w, s.log, err)
+		return
+	}
+	summary.RetainDays = s.cfg.ResourceRetainDays
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"from":           fromAt,
+		"to":             toAt,
+		"bucket_seconds": bucket,
+		"sample_seconds": int(s.cfg.ResourceSampleEvery.Seconds()),
+		"summary":        summary,
+		"points":         orEmpty(points),
+	})
+}

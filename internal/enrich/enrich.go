@@ -77,6 +77,17 @@ type guarded struct {
 
 func (g *guarded) Name() string { return g.inner.Name() }
 
+// Unwrap trả về nguồn gốc bên trong lớp bọc giới hạn tốc độ.
+//
+// Cần khi người gọi phải chạm vào một khả năng riêng của nguồn — đổi khóa API chẳng
+// hạn — thay vì chỉ gọi Enrich qua giao diện chung.
+func Unwrap(e Enricher) Enricher {
+	if g, ok := e.(*guarded); ok {
+		return g.inner
+	}
+	return e
+}
+
 func (g *guarded) Enrich(ctx context.Context, domain string) (any, error) {
 	if !g.enabled.Load() {
 		return nil, ErrDisabled

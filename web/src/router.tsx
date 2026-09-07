@@ -86,6 +86,12 @@ const networkRoute = createRoute({
   component: lazyRouteComponent(() => import('@/routes/network'), 'NetworkScreen'),
 });
 
+const resourcesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/resources',
+  component: lazyRouteComponent(() => import('@/routes/resources'), 'ResourcesScreen'),
+});
+
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/settings',
@@ -109,6 +115,7 @@ const routeTree = rootRoute.addChildren([
   sourcesRoute,
   publishRoute,
   networkRoute,
+  resourcesRoute,
   settingsRoute,
   lookupRoute,
 ]);

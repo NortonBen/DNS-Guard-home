@@ -29,6 +29,8 @@ import type {
   UnblockRequest,
   WeightEntry,
   WeightImpact,
+  ResourceSeries,
+  PublishSettings,
 } from './types';
 
 /**
@@ -49,6 +51,7 @@ export const qk = {
   snapshots: (category: string) => ['snapshots', category] as const,
   overview: (hours: number) => ['stats', 'overview', hours] as const,
   top: (dimension: string, hours: number) => ['stats', 'top', dimension, hours] as const,
+  resources: (hours: number) => ['stats', 'resources', hours] as const,
   health: () => ['health'] as const,
   unblockRequests: () => ['unblock-requests'] as const,
   settings: () => ['settings'] as const,
@@ -487,8 +490,23 @@ export function useUpdateLifecycle() {
 export function useUpdateAnalysis() {
   const client = useQueryClient();
   return useMutation({
-    mutationFn: (body: { http_enabled: boolean }) =>
+    mutationFn: (body: { http_enabled?: boolean; vt_api_key?: string }) =>
       api<AnalysisSettings>('/settings/analysis', { method: 'PUT', body }),
+    onSuccess: () => client.invalidateQueries({ queryKey: qk.settings() }),
+  });
+}
+
+/**
+ * Đổi địa chỉ IP trong file hosts đã xuất bản.
+ *
+ * Không tự xuất bản lại: địa chỉ mới có tác dụng từ lần xuất bản kế tiếp, và ghi lại
+ * toàn bộ danh sách ngay lúc đổi cấu hình là việc nặng không ai yêu cầu.
+ */
+export function useUpdatePublishSettings() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { sink_address: string }) =>
+      api<PublishSettings>('/settings/publish', { method: 'PUT', body }),
     onSuccess: () => client.invalidateQueries({ queryKey: qk.settings() }),
   });
 }
@@ -516,5 +534,26 @@ export function useNetworkGraph(filters: NetworkFilters) {
     queryKey: qk.network(filters),
     queryFn: () => api<NetworkGraph>(`/graph${query({ ...filters })}`),
     staleTime: 5 * 60_000,
+  });
+}
+
+/**
+ * Mức tiêu thụ RAM và CPU của chính DNSGuard.
+ *
+ * Không truyền độ rộng khoảng gộp: máy chủ tự chọn theo khoảng xem, nên giao diện
+ * chỉ cần biết mình muốn nhìn xa bao nhiêu.
+ *
+ * refetchInterval bằng một phút vì đó cũng là nhịp máy chủ ghi xuống — hỏi dày hơn
+ * chỉ nhận lại đúng dữ liệu vừa có.
+ */
+export function useResources(hours: number) {
+  return useQuery({
+    queryKey: qk.resources(hours),
+    queryFn: () =>
+      api<ResourceSeries>(
+        `/stats/resources${query({ from: new Date(Date.now() - hours * 3600_000).toISOString() })}`,
+      ),
+    staleTime: 60_000,
+    refetchInterval: 60_000,
   });
 }

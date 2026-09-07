@@ -30,7 +30,10 @@ interface NavGroup {
 const navigation: NavGroup[] = [
   {
     label: 'Quan sát',
-    items: [{ to: '/', label: 'Tổng quan' }],
+    items: [
+      { to: '/', label: 'Tổng quan' },
+      { to: '/resources', label: 'Tài nguyên' },
+    ],
   },
   {
     label: 'Điều tra',

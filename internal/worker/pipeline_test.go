@@ -133,7 +133,7 @@ func TestFullPipelineFromPacketToPublishedList(t *testing.T) {
 
 	runner := New(db, cfg,
 		registry,
-		publish.New(db, listsDir, cfg.PublishMinRatio, log),
+		publish.New(db, listsDir, cfg.PublishMinRatio, cfg.PublishSink, log),
 		catalog.New(db, log),
 		graph.New(db, log),
 		events.NewBroker(log),
@@ -376,7 +376,7 @@ func TestCircuitBreakerDoesNotPoisonUntriedDomains(t *testing.T) {
 
 	runner := New(db, config.Config{EnrichConcurrency: 1, ListsDir: dir},
 		registry,
-		publish.New(db, dir, 0, log),
+		publish.New(db, dir, 0, "", log),
 		catalog.New(db, log),
 		graph.New(db, log),
 		events.NewBroker(log),

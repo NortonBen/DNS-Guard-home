@@ -18,6 +18,19 @@ const (
 	// quyết định vận hành chứ không phải hạ tầng — người dùng cần bật tắt được mà
 	// không phải khởi động lại dịch vụ.
 	SettingHTTPAnalysis = "analysis.http_enabled"
+	// SettingVTAPIKey giữ khóa API VirusTotal do người quản trị nhập trên giao diện.
+	//
+	// Khóa nằm trong CSDL ở dạng đọc được. Mã hóa nó bằng một khóa cũng nằm trên cùng
+	// máy đó chỉ tạo cảm giác an toàn: ai đọc được file CSDL thì cũng đọc được khóa
+	// giải mã. Lớp bảo vệ thật là quyền truy cập file và việc API không bao giờ trả
+	// khóa ra ngoài.
+	SettingVTAPIKey = "analysis.vt_api_key"
+	// SettingPublishSink là địa chỉ IP mọi domain bị chặn trỏ về trong file hosts.
+	//
+	// 0.0.0.0 làm kết nối hỏng ngay lập tức; 127.0.0.1 làm nó quay về chính máy đang
+	// truy vấn và chờ tới khi hết thời gian nếu máy đó không có gì lắng nghe. Khác
+	// biệt đó thấy rõ trên thiết bị di động, nên phải chọn được.
+	SettingPublishSink = "publish.sink_address"
 )
 
 // GetSetting đọc một giá trị cấu hình vào dest. Trả về false nếu chưa được đặt.

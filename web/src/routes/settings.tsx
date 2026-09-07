@@ -6,10 +6,11 @@ import {
   useSettings,
   useUpdateAnalysis,
   useUpdateLifecycle,
+  useUpdatePublishSettings,
   useUpdateProtectList,
 } from '@/api/hooks';
-import type { AnalysisSettings, LookupTable, SystemInfo } from '@/api/types';
-import { Checkbox, Field, TextInput, Textarea } from '@/components/ui/form';
+import type { AnalysisSettings, LookupTable, PublishSettings, SystemInfo } from '@/api/types';
+import { Checkbox, Field, Select, TextInput, Textarea } from '@/components/ui/form';
 import { Button, Card, ErrorState, Spinner, cx } from '@/components/ui/primitives';
 import { formatBytes, formatNumber, formatRelative } from '@/lib/format';
 
@@ -32,6 +33,7 @@ export function SettingsScreen() {
       <ProtectSection hard={settings.data.protect.hard} soft={settings.data.protect.soft} />
       <LifecycleSection lifecycle={settings.data.lifecycle} />
       <AnalysisSection analysis={settings.data.analysis} />
+      <PublishSection publish={settings.data.publish} />
       <LookupSection tables={settings.data.lookup_tables} />
       <SystemSection system={settings.data.system} />
     </div>
@@ -268,15 +270,206 @@ function AnalysisSection({ analysis }: { analysis: AnalysisSettings }) {
             {analysis.http_effective ? 'có' : 'không'}
           </dd>
           <dt className="text-slate-500 dark:text-slate-400">VirusTotal</dt>
-          <dd>{analysis.vt_configured ? 'đã có khóa API' : 'chưa cấu hình'}</dd>
+          <dd className={analysis.vt_configured ? 'text-emerald-600 dark:text-emerald-400' : ''}>
+            {analysis.vt_configured
+              ? analysis.vt_key_hint
+                ? `đã có khóa …${analysis.vt_key_hint}`
+                : 'đã có khóa API'
+              : 'chưa cấu hình'}
+          </dd>
         </dl>
       </div>
 
-      {!analysis.vt_configured && (
-        <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-          Đặt <code className="font-mono">DNSGUARD_VT_API_KEY</code> để bật xác thực bằng
-          VirusTotal. Chỉ domain đã đạt từ 3,0 điểm mới được tra, nên bậc miễn phí là đủ.
-        </p>
+      <VirusTotalKey analysis={analysis} />
+    </Card>
+  );
+}
+
+/**
+ * Khóa API VirusTotal.
+ *
+ * Ô nhập là loại password và không bao giờ được điền sẵn: máy chủ chỉ trả về bốn ký
+ * tự cuối, nên không có gì để điền. Muốn đổi thì phải dán lại cả khóa — đúng như
+ * mong đợi với một bí mật.
+ */
+function VirusTotalKey({ analysis }: { analysis: AnalysisSettings }) {
+  const update = useUpdateAnalysis();
+  const [key, setKey] = useState('');
+  const [editing, setEditing] = useState(false);
+
+  const save = () => {
+    update.mutate(
+      { vt_api_key: key.trim() },
+      {
+        onSuccess: () => {
+          setKey('');
+          setEditing(false);
+        },
+      },
+    );
+  };
+
+  if (analysis.vt_from_env) {
+    return (
+      <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+        Khóa đang lấy từ <code className="font-mono">DNSGUARD_VT_API_KEY</code>. Nhập khóa tại
+        đây sẽ ghi đè biến môi trường đó.{' '}
+        <button
+          type="button"
+          className="underline underline-offset-2"
+          onClick={() => setEditing(true)}
+        >
+          Nhập khóa khác
+        </button>
+      </p>
+    );
+  }
+
+  if (!editing && analysis.vt_configured) {
+    return (
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+        <span className="text-slate-500 dark:text-slate-400">
+          Khóa đã lưu trên máy chủ và không hiện lại được.
+        </span>
+        <Button className="px-2 py-1 text-xs" onClick={() => setEditing(true)}>
+          Đổi khóa
+        </Button>
+        <Button
+          className="px-2 py-1 text-xs"
+          disabled={update.isPending}
+          onClick={() => update.mutate({ vt_api_key: '' })}
+        >
+          Gỡ khóa
+        </Button>
+        {update.isError && <ErrorState error={update.error} />}
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3 max-w-xl">
+      <Field
+        label="Khóa API VirusTotal"
+        htmlFor="vt-key"
+        hint="Chỉ domain đã đạt từ 3,0 điểm mới được tra, nên bậc miễn phí là đủ. Khóa được thử một lượt gọi thật trước khi lưu."
+      >
+        <div className="flex gap-2">
+          <TextInput
+            id="vt-key"
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="64 ký tự hex"
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+          />
+          <Button
+            variant="primary"
+            className="shrink-0"
+            disabled={key.trim() === '' || update.isPending}
+            onClick={save}
+          >
+            {update.isPending ? 'Đang kiểm tra…' : 'Lưu'}
+          </Button>
+          {(editing || analysis.vt_configured) && (
+            <Button
+              className="shrink-0"
+              onClick={() => {
+                setKey('');
+                setEditing(false);
+              }}
+            >
+              Hủy
+            </Button>
+          )}
+        </div>
+      </Field>
+      {update.isError && (
+        <div className="mt-2">
+          <ErrorState error={update.error} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Địa chỉ đích trong file hosts đã xuất bản.
+ *
+ * Không phải chi tiết vụn vặt: 0.0.0.0 làm kết nối hỏng ngay, còn 127.0.0.1 khiến
+ * máy khách tự gọi về chính nó và ngồi chờ hết thời gian nếu không có gì lắng nghe —
+ * khác biệt thấy rõ nhất trên điện thoại, nơi ứng dụng treo thay vì báo lỗi ngay.
+ */
+function PublishSection({ publish }: { publish: PublishSettings }) {
+  const update = useUpdatePublishSettings();
+
+  const presets = ['0.0.0.0', '127.0.0.1'];
+  const isPreset = presets.includes(publish.sink_address);
+  const [mode, setMode] = useState(isPreset ? publish.sink_address : 'custom');
+  const [custom, setCustom] = useState(isPreset ? '' : publish.sink_address);
+
+  // Giá trị máy chủ đổi (người khác lưu, hoặc vừa lưu xong) thì đồng bộ lại ô nhập.
+  useEffect(() => {
+    const preset = presets.includes(publish.sink_address);
+    setMode(preset ? publish.sink_address : 'custom');
+    setCustom(preset ? '' : publish.sink_address);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [publish.sink_address]);
+
+  const value = mode === 'custom' ? custom.trim() : mode;
+  const dirty = value !== publish.sink_address && value !== '';
+
+  return (
+    <Card title="Địa chỉ xuất bản">
+      <p className="mb-3 max-w-2xl text-sm text-slate-600 dark:text-slate-300">
+        Mỗi dòng trong file hosts là một địa chỉ IP rồi tới tên miền. Địa chỉ này quyết định
+        chuyện gì xảy ra khi thiết bị truy cập một domain bị chặn.
+      </p>
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:max-w-2xl">
+        <Field label="Đích chặn" htmlFor="sink-mode">
+          <Select id="sink-mode" value={mode} onChange={(e) => setMode(e.target.value)}>
+            <option value="0.0.0.0">0.0.0.0 — kết nối hỏng ngay (khuyến nghị)</option>
+            <option value="127.0.0.1">127.0.0.1 — quay về chính máy truy vấn</option>
+            <option value="custom">Địa chỉ khác…</option>
+          </Select>
+        </Field>
+
+        {mode === 'custom' && (
+          <Field
+            label="Địa chỉ IP"
+            htmlFor="sink-custom"
+            hint="IPv4 hoặc IPv6. Trỏ vào một máy chủ thật nghĩa là toàn bộ lưu lượng bị chặn sẽ đổ về đó."
+          >
+            <TextInput
+              id="sink-custom"
+              placeholder="192.168.1.2"
+              spellCheck={false}
+              value={custom}
+              onChange={(e) => setCustom(e.target.value)}
+            />
+          </Field>
+        )}
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <Button
+          variant="primary"
+          disabled={!dirty || update.isPending}
+          onClick={() => update.mutate({ sink_address: value })}
+        >
+          {update.isPending ? 'Đang lưu…' : 'Lưu địa chỉ'}
+        </Button>
+        <span className="text-xs text-slate-500 dark:text-slate-400">
+          Đang dùng <code className="font-mono">{publish.sink_address}</code>. Địa chỉ mới có tác
+          dụng từ lần xuất bản kế tiếp — các file đã ghi vẫn giữ địa chỉ cũ cho tới lúc đó.
+        </span>
+      </div>
+
+      {update.isError && (
+        <div className="mt-2">
+          <ErrorState error={update.error} />
+        </div>
       )}
     </Card>
   );

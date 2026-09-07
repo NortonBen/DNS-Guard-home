@@ -107,6 +107,7 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/scoring/weights", s.handleGetWeights)
 			r.Get("/stats/overview", s.handleStatsOverview)
 			r.Get("/stats/top", s.handleStatsTop)
+			r.Get("/stats/resources", s.handleStatsResources)
 			r.Get("/jobs/{id}", s.handleGetJob)
 			r.Post("/unblock-requests", s.handleCreateUnblockRequest)
 
@@ -133,6 +134,7 @@ func (s *Server) Handler() http.Handler {
 				r.Put("/settings/protect", s.handleUpdateProtect)
 				r.Put("/settings/lifecycle", s.handleUpdateLifecycle)
 				r.Put("/settings/analysis", s.handleUpdateAnalysis)
+				r.Put("/settings/publish", s.handleUpdatePublish)
 				r.Post("/settings/lookup/{kind}/refresh", s.handleRefreshLookup)
 			})
 		})

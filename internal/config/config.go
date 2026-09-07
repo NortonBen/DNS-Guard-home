@@ -8,6 +8,7 @@ package config
 
 import (
 	"fmt"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -29,6 +30,10 @@ type Config struct {
 	StagingDays         int
 	ConfirmTTLDays      int
 	KeepSnapshots       int
+	// ResourceSampleEvery là nhịp đo tài nguyên. Mười giây đủ để thấy đỉnh ngắn mà
+	// không tạo ra lượng ghi đáng kể.
+	ResourceSampleEvery time.Duration
+	ResourceRetainDays  int
 
 	EnrichConcurrency int
 	ExternalEnabled   bool
@@ -38,7 +43,9 @@ type Config struct {
 	HTTPAnalysisEnabled bool
 	VTAPIKey            string
 	PublishMinRatio     float64
-	ListsAllowCIDR      []string
+	// PublishSink là địa chỉ mặc định trong file hosts, dùng khi giao diện chưa đặt.
+	PublishSink    string
+	ListsAllowCIDR []string
 
 	SessionTTL   time.Duration
 	AutoMigrate  bool
@@ -63,6 +70,8 @@ func Load() (Config, error) {
 		StagingDays:         envInt("DNSGUARD_STAGING_DAYS", 7),
 		ConfirmTTLDays:      envInt("DNSGUARD_CONFIRM_TTL_DAYS", 180),
 		KeepSnapshots:       envInt("DNSGUARD_KEEP_SNAPSHOTS", 30),
+		ResourceSampleEvery: time.Duration(envInt("DNSGUARD_RESOURCE_SAMPLE_SECONDS", 10)) * time.Second,
+		ResourceRetainDays:  envInt("DNSGUARD_RESOURCE_RETAIN_DAYS", 30),
 
 		EnrichConcurrency: envInt("DNSGUARD_ENRICH_CONCURRENCY", 4),
 		ExternalEnabled:   envBool("DNSGUARD_EXTERNAL_ENABLED", true),
@@ -71,6 +80,7 @@ func Load() (Config, error) {
 		HTTPAnalysisEnabled: envBool("DNSGUARD_HTTP_ANALYSIS_ENABLED", false),
 		VTAPIKey:            env("DNSGUARD_VT_API_KEY", ""),
 		PublishMinRatio:     envFloat("DNSGUARD_PUBLISH_MIN_RATIO", 0.5),
+		PublishSink:         env("DNSGUARD_PUBLISH_SINK", "0.0.0.0"),
 		ListsAllowCIDR:      envList("DNSGUARD_LISTS_ALLOW_CIDR"),
 
 		SessionTTL:   time.Duration(envInt("DNSGUARD_SESSION_TTL_HOURS", 168)) * time.Hour,
@@ -80,6 +90,9 @@ func Load() (Config, error) {
 		MetricsToken: env("DNSGUARD_METRICS_TOKEN", ""),
 	}
 
+	if _, err := netip.ParseAddr(c.PublishSink); err != nil {
+		return c, fmt.Errorf("DNSGUARD_PUBLISH_SINK phải là địa chỉ IP, nhận %q", c.PublishSink)
+	}
 	if c.PublishMinRatio < 0 || c.PublishMinRatio > 1 {
 		return c, fmt.Errorf("DNSGUARD_PUBLISH_MIN_RATIO phải trong [0,1], nhận %.2f", c.PublishMinRatio)
 	}

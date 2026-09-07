@@ -329,6 +329,33 @@ CREATE TABLE domain_behavior (
 Đặc trưng hành vi tính lại theo lô hằng đêm từ `query_events`. Tách khỏi bảng
 `domains` vì chúng được tính lại định kỳ chứ không cập nhật theo từng truy vấn.
 
+### `resource_samples`
+
+Mức tiêu thụ tài nguyên của chính tiến trình, đo mỗi mười giây.
+
+```sql
+CREATE TABLE resource_samples (
+  at          TEXT    PRIMARY KEY,   -- RFC3339, giống mọi cột thời gian khác
+  cpu_percent REAL    NOT NULL,      -- phần trăm một lõi kể từ lần đo trước
+  rss_bytes   INTEGER NOT NULL,      -- bộ nhớ thường trú, con số hệ điều hành thấy
+  heap_bytes  INTEGER NOT NULL,      -- heap Go đang dùng
+  goroutines  INTEGER NOT NULL
+) WITHOUT ROWID;
+```
+
+`WITHOUT ROWID` vì mốc thời gian đã là khóa chính tự nhiên và mọi truy vấn đều lọc
+theo khoảng thời gian: bảng lưu trực tiếp theo thứ tự khóa thì không cần thêm chỉ mục
+phụ, và ở 260 nghìn dòng cho ba mươi ngày thì chênh lệch đó là đáng kể.
+
+Ghi theo lô mỗi phút chứ không từng mẫu một. Máy chủ có thể chạy trên thẻ nhớ, và
+8.640 giao dịch mỗi ngày chỉ để lưu vài con số là lãng phí vòng ghi mà không đổi lại
+được gì — dữ liệu này chỉ dùng để vẽ biểu đồ.
+
+Đọc ra thì gộp theo khoảng, độ rộng chọn theo khoảng xem để mọi biểu đồ đều dưới bảy
+trăm điểm. Mỗi khoảng giữ cả trung bình lẫn đỉnh: gộp chỉ giữ trung bình sẽ xóa mất
+đúng thứ cần tìm, vì một nhịp tăng ba mươi giây biến mất hoàn toàn trong khoảng gộp
+một giờ.
+
 ## 4. Nguồn ngoài
 
 ```sql
@@ -502,6 +529,7 @@ triển lẫn ảnh Docker.
 | `snapshots` | 30 bản mỗi phân loại | job hằng ngày |
 | `sessions` | tới hạn | job hằng ngày |
 | `jobs` | 7 ngày sau khi xong | job hằng ngày |
+| `resource_samples` | 30 ngày | `DELETE WHERE at < …`, job hằng ngày |
 
 Sau mỗi lần dọn dẹp, chạy `PRAGMA wal_checkpoint(TRUNCATE)` để trả lại dung lượng.
 

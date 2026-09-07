@@ -155,7 +155,7 @@ func cmdPublish(args []string) error {
 	defer db.Close()
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	publisher := publish.New(db, cfg.ListsDir, cfg.PublishMinRatio, log)
+	publisher := publish.New(db, cfg.ListsDir, cfg.PublishMinRatio, cfg.PublishSink, log)
 
 	var only []string
 	if *categories != "" {

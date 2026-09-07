@@ -548,6 +548,40 @@ dải IP nguồn, cấu hình qua `DNSGUARD_LISTS_ALLOW_CIDR`.
 ?dimension=domain|client|blocked&limit=20&from=…&to=…
 ```
 
+### `GET /stats/resources`
+
+Mức tiêu thụ RAM và CPU của chính tiến trình DNSGuard.
+
+```
+?from=…&to=…      RFC3339; mặc định 12 giờ gần nhất, xa nhất 30 ngày
+```
+
+Độ rộng khoảng gộp do máy chủ chọn theo khoảng xem, không nhận từ client: mục tiêu là
+giữ số điểm dưới bảy trăm ở mọi khoảng, và ba mươi ngày ở nhịp mười giây là 260 nghìn
+mẫu. Client tự chọn thì một truy vấn có thể kéo về cả bảng.
+
+```json
+{
+  "from": "2026-09-07T02:00:00Z",
+  "to": "2026-09-07T14:00:00Z",
+  "bucket_seconds": 60,
+  "sample_seconds": 10,
+  "summary": {
+    "samples": 4320, "cpu_avg": 0.5, "cpu_max": 7.2,
+    "rss_avg": 123598681, "rss_max": 153463080,
+    "oldest_at": "2026-09-07T02:00:03Z", "retain_days": 30
+  },
+  "points": [
+    {"t": "2026-09-07T02:00:00Z", "cpu_avg": 0.4, "cpu_max": 1.9,
+     "rss_avg": 120586240, "rss_max": 121634816,
+     "heap_avg": 71203868, "goroutines": 17}
+  ]
+}
+```
+
+Mỗi điểm có cả trung bình lẫn đỉnh. Gộp chỉ giữ trung bình sẽ xóa mất đúng thứ cần
+tìm: một nhịp tăng ba mươi giây biến mất hoàn toàn trong khoảng gộp một giờ.
+
 ### `GET /health`
 
 Không cần xác thực. Dùng cho giám sát.
@@ -628,4 +662,36 @@ Nếu bề mặt API lớn thêm đáng kể, sinh code từ OpenAPI là bước
 | `POST /unblock-requests/:id/resolve` | Chấp nhận hoặc từ chối một yêu cầu |
 | `GET /settings/protect` | Danh sách bảo vệ cứng (chỉ đọc) và mềm |
 | `PUT /settings/protect` | Sửa danh sách bảo vệ mềm |
+| `PUT /settings/lifecycle` | Ngưỡng vòng đời (chờ duyệt, hạn xác nhận lại) |
+| `PUT /settings/analysis` | Bật tắt phân tích HTTP, và đặt hoặc gỡ khóa API VirusTotal |
+| `PUT /settings/publish` | Địa chỉ IP mọi domain bị chặn trỏ về trong file hosts |
+| `POST /settings/lookup/:kind/refresh` | Tải lại bảng tra cứu cục bộ |
+| `GET /stats/resources` | RAM và CPU của chính dịch vụ, gộp theo khoảng |
+| `GET /graph` | Bản đồ quan hệ toàn mạng |
 | `GET /metrics` | Chỉ số Prometheus; bảo vệ bằng bearer token nếu có cấu hình |
+
+### Khóa API VirusTotal
+
+`PUT /settings/analysis` nhận `vt_api_key`. Trường này là con trỏ trong mã: vắng mặt
+nghĩa là giữ nguyên, chuỗi rỗng nghĩa là gỡ khóa.
+
+Khóa được kiểm tra bằng một lượt gọi thật tới VirusTotal trước khi lưu — lưu một khóa
+gõ sai nghĩa là nguồn im lặng hỏng, mọi lượt tra đều trượt, và không ai biết cho tới
+khi đọc log. Hết quota vẫn coi là khóa hợp lệ: VirusTotal phải nhận ra khóa mới đếm
+được quota của nó.
+
+**Khóa không bao giờ được trả về.** `GET /settings` chỉ trả `vt_configured`,
+`vt_key_hint` (bốn ký tự cuối) và `vt_from_env`. Không màn hình nào cần khóa đầy đủ,
+nên trả nó ra chỉ thêm chỗ rò rỉ qua log truy cập hay ảnh chụp màn hình.
+
+### Địa chỉ xuất bản
+
+`PUT /settings/publish` nhận `sink_address` — địa chỉ IP đứng đầu mỗi dòng trong file
+hosts. Chỉ nhận địa chỉ IP hợp lệ (v4 hoặc v6), không nhận tên miền: một tên miền ở
+cột đó làm phần lớn phần mềm đọc file bỏ qua cả dòng, và mạng mất chặn mà không có
+lỗi nào. Giá trị được chuẩn hóa trước khi lưu, nên `0:0:0:0:0:0:0:1` và `::1` không
+sinh ra hai checksum khác nhau.
+
+Đổi địa chỉ không tự xuất bản lại. Địa chỉ mới có tác dụng từ lần xuất bản kế tiếp, và
+vì checksum tính cả địa chỉ nên lần đó chắc chắn được ghi lại chứ không bị bỏ qua vì
+"không có gì thay đổi".

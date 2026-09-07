@@ -464,13 +464,15 @@ func (r *Runner) runBehavior(ctx context.Context) error {
 
 func (r *Runner) runRetention(ctx context.Context) error {
 	res, err := r.store.ApplyRetention(ctx,
-		r.cfg.LogRetentionDays, r.cfg.HourlyRetentionDays, r.cfg.KeepSnapshots)
+		r.cfg.LogRetentionDays, r.cfg.HourlyRetentionDays, r.cfg.KeepSnapshots,
+		r.cfg.ResourceRetainDays)
 	if err != nil {
 		return err
 	}
 	r.log.Info("dọn dữ liệu quá hạn",
 		"query_events", res.QueryEvents, "domain_hourly", res.DomainHourly,
-		"sessions", res.Sessions, "snapshots", res.Snapshots, "jobs", res.Jobs)
+		"sessions", res.Sessions, "snapshots", res.Snapshots, "jobs", res.Jobs,
+		"resources", res.Resources)
 
 	// Xóa nhiều dòng để lại khoảng trống trong file; gộp WAL để trả lại dung lượng.
 	return r.store.Checkpoint()

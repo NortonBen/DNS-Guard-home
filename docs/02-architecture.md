@@ -434,14 +434,23 @@ Mọi giá trị đặt được qua biến môi trường, tiền tố `DNSGUAR
 | `DNSGUARD_ENRICH_CONCURRENCY` | `4` | Số job làm giàu song song |
 | `DNSGUARD_EXTERNAL_ENABLED` | `true` | Tắt toàn bộ truy vấn ra ngoài |
 | `DNSGUARD_HTTP_ANALYSIS_ENABLED` | `false` | Tải trang gốc của domain để phân tích header và HTML |
-| `DNSGUARD_VT_API_KEY` | — | Khóa API VirusTotal; trống thì bỏ qua nguồn này |
+| `DNSGUARD_VT_API_KEY` | — | Khóa API VirusTotal; đặt được trên giao diện và giá trị đó thắng |
 | `DNSGUARD_PUBLISH_MIN_RATIO` | `0.5` | Ngưỡng chặn xuất bản khi sụt giảm |
+| `DNSGUARD_PUBLISH_SINK` | `0.0.0.0` | Địa chỉ mặc định trong file hosts; đổi được trên giao diện |
+| `DNSGUARD_RESOURCE_SAMPLE_SECONDS` | `10` | Nhịp đo RAM và CPU của chính dịch vụ |
+| `DNSGUARD_RESOURCE_RETAIN_DAYS` | `30` | Giữ mẫu đo tài nguyên bao lâu |
 | `DNSGUARD_LISTS_ALLOW_CIDR` | — | Dải IP được tải `/lists/*`; trống là tất cả |
 | `DNSGUARD_SESSION_TTL_HOURS` | `168` | Thời hạn phiên đăng nhập |
 | `DNSGUARD_AUTO_MIGRATE` | `true` | Chạy migration khi khởi động |
 | `DNSGUARD_ADMIN_PASSWORD` | — | Mật khẩu admin đầu tiên; trống thì tự sinh |
 | `DNSGUARD_METRICS_TOKEN` | — | Bảo vệ `/metrics` bằng bearer token |
 | `DNSGUARD_LOG_LEVEL` | `info` | `debug` · `info` · `warn` · `error` |
+
+Ba khóa trong bảng này đặt được cả ở biến môi trường lẫn trên giao diện:
+`HTTP_ANALYSIS_ENABLED`, `VT_API_KEY` và `PUBLISH_SINK`. Giá trị lưu trên giao diện
+thắng, vì nó mới hơn và là hành động có chủ ý, trong khi biến môi trường thường nằm
+trong file compose từ lần cài đặt đầu. Ngoại lệ là `EXTERNAL_ENABLED`: đó là công tắc
+cứng, tắt ở đó thì bật trên giao diện cũng không có tác dụng.
 
 ## 8. Bảo mật
 

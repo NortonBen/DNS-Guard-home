@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,13 +40,42 @@ type Publisher struct {
 	store    *store.Store
 	dir      string
 	minRatio float64
-	log      *slog.Logger
+	// defaultSink dùng khi giao diện chưa đặt địa chỉ nào.
+	defaultSink string
+	log         *slog.Logger
 }
 
 // New dựng Publisher. minRatio là tỉ lệ tối thiểu so với lần xuất bản trước; dưới
-// mức đó thì từ chối ghi.
-func New(s *store.Store, dir string, minRatio float64, log *slog.Logger) *Publisher {
-	return &Publisher{store: s, dir: dir, minRatio: minRatio, log: log}
+// mức đó thì từ chối ghi. defaultSink là địa chỉ trong file hosts khi chưa có cài đặt.
+func New(s *store.Store, dir string, minRatio float64, defaultSink string, log *slog.Logger) *Publisher {
+	if defaultSink == "" {
+		defaultSink = DefaultSink
+	}
+	return &Publisher{store: s, dir: dir, minRatio: minRatio, defaultSink: defaultSink, log: log}
+}
+
+// DefaultSink là địa chỉ dùng khi không có cấu hình nào.
+//
+// 0.0.0.0 chứ không phải 127.0.0.1: địa chỉ này không định tuyến được nên kết nối
+// hỏng ngay, trong khi 127.0.0.1 khiến máy khách tự gọi về chính nó và ngồi chờ hết
+// thời gian nếu không có gì lắng nghe ở đó.
+const DefaultSink = "0.0.0.0"
+
+// SinkAddress trả về địa chỉ đang dùng cho file hosts.
+func (p *Publisher) SinkAddress(ctx context.Context) string {
+	var stored string
+	if ok, err := p.store.GetSetting(ctx, store.SettingPublishSink, &stored); err == nil && ok {
+		if _, err := netip.ParseAddr(stored); err == nil {
+			return stored
+		}
+		// Giá trị hỏng trong CSDL không được làm hỏng việc xuất bản: lùi về mặc định
+		// và nói ra, chứ không ghi ra một file hosts vô nghĩa.
+		if stored != "" {
+			p.log.Warn("địa chỉ xuất bản trong cài đặt không hợp lệ, dùng mặc định",
+				"value", stored, "default", p.defaultSink)
+		}
+	}
+	return p.defaultSink
 }
 
 // PublishAll xuất bản mọi phân loại đang bật cộng file gộp.
@@ -106,7 +136,7 @@ func (p *Publisher) publishOne(ctx context.Context, categoryID int64,
 		return Result{}, err
 	}
 
-	body := render(categoryKey, domains)
+	body := render(categoryKey, domains, p.SinkAddress(ctx))
 	sum := sha256.Sum256([]byte(body))
 	checksum := "sha256:" + hex.EncodeToString(sum[:])
 	path := filepath.Join(p.dir, fileName)
@@ -180,7 +210,9 @@ func (p *Publisher) Rollback(ctx context.Context, snapshotID int64, actor string
 		return Result{}, err
 	}
 
-	body := render(target.CategoryKey, domains)
+	// Dùng địa chỉ hiện hành chứ không phải địa chỉ lúc chụp snapshot: quay lại là
+	// quay lại tập domain, không phải quay lại cấu hình mạng.
+	body := render(target.CategoryKey, domains, p.SinkAddress(ctx))
 	sum := sha256.Sum256([]byte(body))
 	checksum := "sha256:" + hex.EncodeToString(sum[:])
 
@@ -218,14 +250,19 @@ func (p *Publisher) categoryIDOf(ctx context.Context, key string) (int64, error)
 }
 
 // render dựng nội dung file theo định dạng hosts.
-func render(category string, domains []string) string {
+func render(category string, domains []string, sink string) string {
 	var sb strings.Builder
-	sb.Grow(len(domains)*24 + 128)
+	sb.Grow(len(domains)*(len(sink)+18) + 160)
 
 	fmt.Fprintf(&sb, "# DNSGuard — %s\n", category)
 	fmt.Fprintf(&sb, "# %d domain · %s\n", len(domains), time.Now().UTC().Format(time.RFC3339))
+	// Ghi địa chỉ vào header: người mở file cần biết ngay danh sách này trỏ đi đâu,
+	// nhất là khi đem đối chiếu hai bản xuất bản khác nhau.
+	fmt.Fprintf(&sb, "# địa chỉ chặn: %s\n", sink)
+
+	prefix := sink + " "
 	for _, d := range domains {
-		sb.WriteString("0.0.0.0 ")
+		sb.WriteString(prefix)
 		sb.WriteString(d)
 		sb.WriteByte('\n')
 	}

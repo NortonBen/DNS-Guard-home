@@ -319,6 +319,48 @@ http://192.168.88.10:8080/lists/ads.txt
 Và một dòng nhắc: *"MikroTik kiểm tra cập nhật mỗi 4 giờ. Muốn áp dụng ngay, chạy
 `/ip dns adlist reload` trên router."*
 
+### 4.9 Bản đồ quan hệ `/graph`
+
+Đồ thị quan hệ của toàn mạng, khác trang chi tiết domain ở câu hỏi nó trả lời: trang
+chi tiết hỏi "domain này liên quan tới gì", màn này hỏi "mạng này có những cụm hạ tầng
+nào". Lọc theo loại cạnh, trạng thái, số quan hệ tối thiểu và số nút tối đa.
+
+Vẽ bằng canvas chứ không phải SVG, và lực đẩy tính qua lưới không gian thay vì duyệt
+mọi cặp: ở ba trăm nút thì duyệt mọi cặp là 45.000 phép tính mỗi bước.
+
+Nút chọn theo bậc giảm dần để các hub nổi lên trước, và chỉ giữ cạnh có cả hai đầu
+nằm trong tập nút đã chọn. Khi bị cắt bớt thì nói ra bằng một dòng cảnh báo — im lặng
+cắt sẽ khiến người xem tưởng mình đang nhìn toàn bộ.
+
+### 4.10 Tài nguyên `/resources`
+
+RAM và CPU của chính DNSGuard, chọn khoảng từ 12 giờ tới 30 ngày. Hai biểu đồ: CPU
+(trung bình và đỉnh) và bộ nhớ (thường trú, đỉnh thường trú, heap Go).
+
+Câu hỏi màn này trả lời là dịch vụ có phình bộ nhớ theo thời gian không, và có lúc nào
+ngốn CPU bất thường không. Cả hai chỉ thấy được khi nhìn nhiều ngày, nên ảnh chụp một
+thời điểm ở màn Cài đặt không thay thế được.
+
+Hai đường bộ nhớ tách nhau ra là dấu hiệu đáng chú ý: heap phẳng mà thường trú tăng
+đều nghĩa là runtime đang giữ lại bộ nhớ đã trả, chứ không phải mã nguồn rò rỉ.
+
+Khi dữ liệu không phủ hết khoảng đã chọn thì nói ra, vì một biểu đồ ngắn hơn mong đợi
+trông giống hệt mất dữ liệu.
+
+### 4.11 Cài đặt `/settings`
+
+Xếp theo mức nguy hiểm giảm dần: danh sách bảo vệ, vòng đời, phân tích ngoài (gồm
+công tắc HTTP và khóa API VirusTotal), địa chỉ xuất bản, dữ liệu tra cứu, thông tin
+hệ thống.
+
+Ô nhập khóa VirusTotal là loại password và không bao giờ được điền sẵn — máy chủ chỉ
+trả về bốn ký tự cuối, nên không có gì để điền. Đổi khóa thì phải dán lại cả khóa.
+
+Địa chỉ xuất bản có ba lựa chọn: `0.0.0.0` (kết nối hỏng ngay), `127.0.0.1` (quay về
+chính máy truy vấn), hoặc một địa chỉ tự nhập. Khác biệt không nhỏ như vẻ ngoài:
+`127.0.0.1` khiến máy khách tự gọi về chính nó và ngồi chờ hết thời gian nếu không có
+gì lắng nghe, thấy rõ nhất trên điện thoại nơi ứng dụng treo thay vì báo lỗi ngay.
+
 ## 5. Nhận diện
 
 <p align="center">

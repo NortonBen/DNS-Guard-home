@@ -23,7 +23,17 @@ func newTestPublisher(t *testing.T, minRatio float64) (*Publisher, *store.Store,
 
 	dir := t.TempDir()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return New(s, dir, minRatio, log), s, dir
+	return New(s, dir, minRatio, "", log), s, dir
+}
+
+// readFile đọc một danh sách đã xuất bản.
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("đọc %s: %v", path, err)
+	}
+	return string(raw)
 }
 
 // blockDomains đưa n domain vào trạng thái blocked thuộc phân loại ads.
@@ -207,5 +217,83 @@ func TestRollbackRestoresAndRecordsHistory(t *testing.T) {
 	}
 	if !strings.Contains(after[0].PublishedBy, "rollback") {
 		t.Errorf("published_by = %q, muốn có ghi chú rollback", after[0].PublishedBy)
+	}
+}
+
+func TestRenderUsesConfiguredSinkAddress(t *testing.T) {
+	p, s, dir := newTestPublisher(t, 0.5)
+	ctx := context.Background()
+
+	blockDomains(t, s, "quangcao.vn", "theodoi.vn")
+
+	if err := s.SetSetting(ctx, store.SettingPublishSink, "127.0.0.1", "admin"); err != nil {
+		t.Fatalf("lưu địa chỉ: %v", err)
+	}
+	if _, err := p.PublishAll(ctx, nil, "test"); err != nil {
+		t.Fatalf("xuất bản: %v", err)
+	}
+
+	body := readFile(t, filepath.Join(dir, "all.txt"))
+	if !strings.Contains(body, "127.0.0.1 quangcao.vn") {
+		t.Errorf("không dùng địa chỉ đã cấu hình:\n%s", body)
+	}
+	if strings.Contains(body, "0.0.0.0 quangcao.vn") {
+		t.Errorf("vẫn còn địa chỉ mặc định:\n%s", body)
+	}
+}
+
+func TestSinkAddressFallsBackWhenSettingIsCorrupt(t *testing.T) {
+	// Một giá trị hỏng trong CSDL không được biến file hosts thành rác. Ghi ra
+	// "khong-phai-ip domain.vn" nghĩa là phần lớn phần mềm bỏ qua cả file, và mạng
+	// mất chặn hoàn toàn mà không có lỗi nào.
+	p, s, dir := newTestPublisher(t, 0.5)
+	ctx := context.Background()
+
+	blockDomains(t, s, "quangcao.vn")
+	if err := s.SetSetting(ctx, store.SettingPublishSink, "khong-phai-ip", "admin"); err != nil {
+		t.Fatalf("lưu địa chỉ: %v", err)
+	}
+
+	if got := p.SinkAddress(ctx); got != DefaultSink {
+		t.Errorf("địa chỉ = %q, muốn lùi về %q", got, DefaultSink)
+	}
+	if _, err := p.PublishAll(ctx, nil, "test"); err != nil {
+		t.Fatalf("xuất bản: %v", err)
+	}
+	if body := readFile(t, filepath.Join(dir, "all.txt")); !strings.Contains(body, DefaultSink+" quangcao.vn") {
+		t.Errorf("không lùi về mặc định:\n%s", body)
+	}
+}
+
+func TestChangingSinkAddressRepublishes(t *testing.T) {
+	// Đổi địa chỉ phải làm nội dung đổi theo. Nếu checksum không tính cả địa chỉ thì
+	// lần xuất bản sau bị coi là "không có gì thay đổi" và file cũ nằm nguyên.
+	p, s, dir := newTestPublisher(t, 0.5)
+	ctx := context.Background()
+
+	blockDomains(t, s, "quangcao.vn")
+	if _, err := p.PublishAll(ctx, nil, "test"); err != nil {
+		t.Fatalf("xuất bản lần đầu: %v", err)
+	}
+
+	if err := s.SetSetting(ctx, store.SettingPublishSink, "127.0.0.1", "admin"); err != nil {
+		t.Fatalf("lưu địa chỉ: %v", err)
+	}
+	results, err := p.PublishAll(ctx, nil, "test")
+	if err != nil {
+		t.Fatalf("xuất bản lần hai: %v", err)
+	}
+
+	changed := false
+	for _, r := range results {
+		if r.Category == "all" {
+			changed = r.Changed
+		}
+	}
+	if !changed {
+		t.Error("đổi địa chỉ mà vẫn báo không có thay đổi")
+	}
+	if body := readFile(t, filepath.Join(dir, "all.txt")); !strings.Contains(body, "127.0.0.1 quangcao.vn") {
+		t.Errorf("file không được ghi lại:\n%s", body)
 	}
 }

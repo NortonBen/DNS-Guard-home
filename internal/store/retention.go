@@ -12,13 +12,14 @@ type RetentionResult struct {
 	Sessions     int64 `json:"sessions"`
 	Snapshots    int64 `json:"snapshots"`
 	Jobs         int64 `json:"jobs"`
+	Resources    int64 `json:"resources"`
 }
 
 // ApplyRetention xóa dữ liệu quá hạn theo chính sách ở docs/03-data-model.md §9.
 //
 // Bảng decisions không bao giờ bị xóa. Query log tái tạo được từ mạng, danh sách
 // công khai tải lại được, nhưng lịch sử quyết định của con người thì mất là mất.
-func (s *Store) ApplyRetention(ctx context.Context, logDays, hourlyDays, keepSnapshots int) (RetentionResult, error) {
+func (s *Store) ApplyRetention(ctx context.Context, logDays, hourlyDays, keepSnapshots, resourceDays int) (RetentionResult, error) {
 	var out RetentionResult
 
 	// Xóa theo lô: một DELETE trên nhiều triệu dòng giữ khóa ghi quá lâu và làm
@@ -51,6 +52,9 @@ func (s *Store) ApplyRetention(ctx context.Context, logDays, hourlyDays, keepSna
 		return out, err
 	}
 	if out.Jobs, err = s.PruneJobs(ctx, 7); err != nil {
+		return out, err
+	}
+	if out.Resources, err = s.PruneResourceSamples(ctx, resourceDays); err != nil {
 		return out, err
 	}
 	return out, nil

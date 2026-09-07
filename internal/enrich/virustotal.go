@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"sync/atomic"
 	"time"
 )
 
@@ -28,6 +29,7 @@ var (
 	ErrVTQuota    = errors.New("VirusTotal hết quota")
 	ErrVTNotFound = errors.New("VirusTotal chưa biết domain này")
 	ErrVTNoAPIKey = errors.New("chưa cấu hình khóa API VirusTotal")
+	ErrVTBadKey   = errors.New("VirusTotal từ chối khóa API")
 )
 
 // VTEnricher tra cứu VirusTotal để xác thực thêm cho domain đã đáng ngờ.
@@ -37,33 +39,104 @@ var (
 // worker, không ở đây.
 type VTEnricher struct {
 	client *http.Client
-	apiKey string
+	// baseURL tách ra để test chỉ được vào một máy chủ giả. Mã sản xuất không bao giờ
+	// đổi nó — VirusTotal chỉ có một endpoint.
+	baseURL string
+	// apiKey đổi được lúc chạy khi người quản trị nhập khóa mới trên giao diện, trong
+	// khi worker có thể đang tra cứu ở luồng khác — nên phải là con trỏ nguyên tử.
+	apiKey atomic.Pointer[string]
 }
 
 // NewVirusTotal dựng bộ tra cứu. apiKey rỗng thì nguồn tự báo chưa sẵn sàng.
 func NewVirusTotal(apiKey string) *VTEnricher {
-	return &VTEnricher{
-		client: &http.Client{Timeout: 20 * time.Second},
-		apiKey: apiKey,
+	e := &VTEnricher{
+		client:  &http.Client{Timeout: 20 * time.Second},
+		baseURL: "https://www.virustotal.com/api/v3/domains/",
 	}
+	e.SetAPIKey(apiKey)
+	return e
 }
 
 func (e *VTEnricher) Name() string { return "vt" }
 
+// SetAPIKey thay khóa API ngay lúc chạy. Chuỗi rỗng nghĩa là gỡ khóa.
+func (e *VTEnricher) SetAPIKey(key string) {
+	e.apiKey.Store(&key)
+}
+
+func (e *VTEnricher) key() string {
+	if p := e.apiKey.Load(); p != nil {
+		return *p
+	}
+	return ""
+}
+
 // Configured cho biết đã có khóa API chưa.
-func (e *VTEnricher) Configured() bool { return e.apiKey != "" }
+func (e *VTEnricher) Configured() bool { return e.key() != "" }
+
+// KeyHint trả về vài ký tự cuối của khóa để người quản trị nhận ra mình đang dùng
+// khóa nào, mà không lộ đủ để dùng lại.
+//
+// Bốn ký tự cuối trên tổng sáu mươi tư ký tự hex không thu hẹp không gian tìm kiếm
+// đến mức có ý nghĩa, nhưng đủ để phân biệt hai khóa khi cần đổi.
+func (e *VTEnricher) KeyHint() string {
+	key := e.key()
+	if len(key) < 8 {
+		return ""
+	}
+	return key[len(key)-4:]
+}
+
+// VerifyKey thử một lượt gọi thật để biết khóa có dùng được không.
+//
+// Lưu một khóa gõ sai mà không kiểm tra nghĩa là nguồn im lặng hỏng: mọi lượt tra
+// đều trượt, circuit breaker mở ra, và không ai biết cho tới khi đọc log.
+func (e *VTEnricher) VerifyKey(ctx context.Context, key string) error {
+	if key == "" {
+		return ErrVTNoAPIKey
+	}
+
+	// Tra một domain chắc chắn tồn tại trong cơ sở dữ liệu VirusTotal: mục đích ở đây
+	// là kiểm tra khóa, không phải kiểm tra domain.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, e.baseURL+"google.com", nil)
+	if err != nil {
+		return fmt.Errorf("dựng request kiểm tra khóa: %w", err)
+	}
+	req.Header.Set("x-apikey", key)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := e.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("gọi VirusTotal: %w", err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusNotFound:
+		return nil
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return ErrVTBadKey
+	case http.StatusTooManyRequests:
+		// Hết quota nghĩa là khóa đúng — VirusTotal đã nhận ra nó mới đếm được quota.
+		return nil
+	default:
+		return fmt.Errorf("VirusTotal trả HTTP %d", resp.StatusCode)
+	}
+}
 
 func (e *VTEnricher) Enrich(ctx context.Context, domain string) (any, error) {
-	if e.apiKey == "" {
+	key := e.key()
+	if key == "" {
 		return nil, ErrVTNoAPIKey
 	}
 
-	endpoint := "https://www.virustotal.com/api/v3/domains/" + url.PathEscape(domain)
+	endpoint := e.baseURL + url.PathEscape(domain)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("dựng request VirusTotal: %w", err)
 	}
-	req.Header.Set("x-apikey", e.apiKey)
+	req.Header.Set("x-apikey", key)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := e.client.Do(req)

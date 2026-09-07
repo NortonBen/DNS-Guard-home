@@ -292,11 +292,23 @@ export interface AnalysisSettings {
   external_enabled: boolean;
   http_effective: boolean;
   vt_configured: boolean;
+  /** Bốn ký tự cuối của khóa. Khóa đầy đủ không bao giờ rời khỏi máy chủ. */
+  vt_key_hint: string;
+  /** Khóa đến từ biến môi trường, nên giao diện không sửa được. */
+  vt_from_env: boolean;
+}
+
+export interface PublishSettings {
+  /** Địa chỉ mọi domain bị chặn trỏ về trong file hosts. */
+  sink_address: string;
+  /** Giá trị từ biến môi trường, dùng khi chưa đặt gì trên giao diện. */
+  sink_default: string;
 }
 
 export interface Settings {
   protect: { hard: string[]; soft: string[] };
   analysis: AnalysisSettings;
+  publish: PublishSettings;
   lifecycle: {
     staging_days: number;
     confirm_ttl_days: number;
@@ -323,4 +335,35 @@ export interface NetworkGraph {
   total_nodes: number;
   total_edges: number;
   truncated: boolean;
+}
+
+/** Một khoảng đã gộp trên biểu đồ tài nguyên. */
+export interface ResourcePoint {
+  t: string;
+  cpu_avg: number;
+  cpu_max: number;
+  rss_avg: number;
+  rss_max: number;
+  heap_avg: number;
+  goroutines: number;
+}
+
+export interface ResourceSummary {
+  samples: number;
+  cpu_avg: number;
+  cpu_max: number;
+  rss_avg: number;
+  rss_max: number;
+  oldest_at?: string;
+  retain_days: number;
+}
+
+export interface ResourceSeries {
+  from: string;
+  to: string;
+  /** Độ rộng khoảng gộp máy chủ đã chọn; hiện ra để người xem biết mình đang nhìn gì. */
+  bucket_seconds: number;
+  sample_seconds: number;
+  summary: ResourceSummary;
+  points: ResourcePoint[];
 }

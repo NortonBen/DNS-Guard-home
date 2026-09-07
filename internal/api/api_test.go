@@ -67,13 +67,19 @@ func newHarness(t *testing.T) *harness {
 	}
 
 	bus := events.NewBroker(log)
-	publisher := publish.New(db, listsDir, cfg.PublishMinRatio, log)
+	publisher := publish.New(db, listsDir, cfg.PublishMinRatio, cfg.PublishSink, log)
 	runner := worker.New(db, cfg, enrich.NewRegistry(log), publisher,
 		catalog.New(db, log), graph.New(db, log), bus, log)
+
+	// Registry thật, có đăng ký VirusTotal nhưng chưa có khóa: đây đúng là trạng thái
+	// một máy chủ mới cài, và cũng là điều kiện các test cấu hình khóa cần.
+	enrichers := enrich.NewRegistry(log)
+	enrichers.Register(enrich.NewVirusTotal(""), 1, 1, false)
 
 	srv := New(Options{
 		Store: db, Auth: auth.NewService(db, cfg.SessionTTL), Config: cfg,
 		Publisher: publisher, Worker: runner, Bus: bus, Log: log,
+		Enrichers: enrichers,
 	})
 
 	ts := httptest.NewServer(srv.Handler())
@@ -259,7 +265,7 @@ func TestFullFlowFromDecisionToPublishedList(t *testing.T) {
 	}
 
 	// Xuất bản đồng bộ để test không phụ thuộc vào bộ lập lịch nền.
-	publisher := publish.New(h.store, h.listsDir, 0.5,
+	publisher := publish.New(h.store, h.listsDir, 0.5, "",
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if _, err := publisher.PublishAll(context.Background(), []string{"ads"}, "test"); err != nil {
 		t.Fatalf("xuất bản: %v", err)
@@ -606,5 +612,186 @@ func TestForgedForwardedHeaderCannotBypassListsAllowlist(t *testing.T) {
 
 	if resp.StatusCode != http.StatusForbidden {
 		t.Errorf("X-Forwarded-For giả mạo → HTTP %d, muốn 403", resp.StatusCode)
+	}
+}
+
+// bodyContains cho biết phản hồi có chứa chuỗi nào đó không.
+func bodyContains(payload []byte, needle string) bool {
+	return strings.Contains(string(payload), needle)
+}
+
+func TestVTKeyNeverLeavesTheServer(t *testing.T) {
+	// Bí mật đã lưu không được quay ra ngoài, kể cả với người quản trị đã đăng nhập:
+	// không có màn hình nào cần khóa đầy đủ, nên trả nó ra chỉ tạo thêm chỗ rò rỉ
+	// qua log truy cập, lịch sử trình duyệt hay ảnh chụp màn hình.
+	h := newHarness(t)
+	h.login()
+
+	const secret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	if err := h.store.SetSetting(context.Background(),
+		store.SettingVTAPIKey, secret, "admin"); err != nil {
+		t.Fatalf("lưu khóa: %v", err)
+	}
+	// Nạp vào registry đúng như lúc khởi động.
+	vt, _ := enrich.Unwrap(mustGet(t, h.srv.enrichers, "vt")).(*enrich.VTEnricher)
+	vt.SetAPIKey(secret)
+
+	resp, body := h.do(http.MethodGet, "/api/v1/settings", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /settings = %d: %s", resp.StatusCode, body)
+	}
+	if bodyContains(body, secret) {
+		t.Fatal("khóa API đầy đủ có trong phản hồi /settings")
+	}
+	if !bodyContains(body, `"vt_key_hint":"cdef"`) {
+		t.Errorf("thiếu gợi ý bốn ký tự cuối: %s", body)
+	}
+	if !bodyContains(body, `"vt_configured":true`) {
+		t.Errorf("không báo là đã cấu hình: %s", body)
+	}
+}
+
+func TestVTKeyRejectsMalformedKeyBeforeCallingOut(t *testing.T) {
+	// Dạng khóa kiểm tra trước khi ra mạng: dán thiếu vài ký tự là lỗi thường gặp
+	// nhất, và bắt nó tại chỗ nhanh hơn một vòng đi về VirusTotal.
+	h := newHarness(t)
+	h.login()
+
+	for _, bad := range []string{
+		"quá-ngắn",
+		"0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF", // hoa
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde",  // thiếu 1
+	} {
+		resp, body := h.do(http.MethodPut, "/api/v1/settings/analysis",
+			map[string]any{"vt_api_key": bad})
+		if resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Errorf("khóa %q = %d, muốn 422: %s", bad, resp.StatusCode, body)
+		}
+	}
+
+	// Không có gì được lưu lại.
+	var stored string
+	ok, err := h.store.GetSetting(context.Background(), store.SettingVTAPIKey, &stored)
+	if err != nil {
+		t.Fatalf("đọc setting: %v", err)
+	}
+	if ok && stored != "" {
+		t.Error("khóa sai dạng vẫn bị lưu")
+	}
+}
+
+func TestVTKeyCanBeRemoved(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+
+	ctx := context.Background()
+	if err := h.store.SetSetting(ctx, store.SettingVTAPIKey,
+		"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "admin"); err != nil {
+		t.Fatalf("lưu khóa: %v", err)
+	}
+	vt, _ := enrich.Unwrap(mustGet(t, h.srv.enrichers, "vt")).(*enrich.VTEnricher)
+	vt.SetAPIKey("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+
+	// Chuỗi rỗng là lệnh gỡ, và phải gỡ được mà không cần gọi ra ngoài — nếu không
+	// thì lúc VirusTotal sập cũng không xóa được khóa hỏng.
+	resp, body := h.do(http.MethodPut, "/api/v1/settings/analysis",
+		map[string]any{"vt_api_key": ""})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("gỡ khóa = %d: %s", resp.StatusCode, body)
+	}
+	if bodyContains(body, `"vt_configured":true`) {
+		t.Errorf("vẫn báo đã cấu hình sau khi gỡ: %s", body)
+	}
+	if vt.Configured() {
+		t.Error("nguồn vẫn giữ khóa sau khi gỡ")
+	}
+}
+
+func TestVTKeyNeedsAdmin(t *testing.T) {
+	h := newHarness(t)
+
+	resp, _ := h.do(http.MethodPut, "/api/v1/settings/analysis",
+		map[string]any{"vt_api_key": ""})
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("chưa đăng nhập = %d, muốn 401", resp.StatusCode)
+	}
+}
+
+func mustGet(t *testing.T, r *enrich.Registry, name string) enrich.Enricher {
+	t.Helper()
+	e, ok := r.Get(name)
+	if !ok {
+		t.Fatalf("không có nguồn %q", name)
+	}
+	return e
+}
+
+func TestPublishSinkRejectsNonIPAddresses(t *testing.T) {
+	// Định dạng hosts chỉ nhận địa chỉ IP ở cột đầu. Một tên miền ở đó làm phần lớn
+	// phần mềm đọc file bỏ qua cả dòng, và mạng mất chặn mà không có lỗi nào.
+	h := newHarness(t)
+	h.login()
+
+	for _, bad := range []string{"vidu.vn", "999.1.1.1", "0.0.0.0/8", "", "  "} {
+		resp, body := h.do(http.MethodPut, "/api/v1/settings/publish",
+			map[string]any{"sink_address": bad})
+		if resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Errorf("địa chỉ %q = %d, muốn 422: %s", bad, resp.StatusCode, body)
+		}
+	}
+}
+
+func TestPublishSinkAcceptsIPv4AndIPv6(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+
+	cases := map[string]string{
+		"0.0.0.0":   "0.0.0.0",
+		"127.0.0.1": "127.0.0.1",
+		"::":        "::",
+		"::1":       "::1",
+		// Chuẩn hóa: hai cách viết cùng một địa chỉ phải lưu về cùng một dạng, nếu
+		// không mỗi lần lưu lại sinh ra một checksum khác dù nội dung không đổi.
+		"0:0:0:0:0:0:0:1": "::1",
+	}
+
+	for input, want := range cases {
+		resp, body := h.do(http.MethodPut, "/api/v1/settings/publish",
+			map[string]any{"sink_address": input})
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("địa chỉ %q = %d: %s", input, resp.StatusCode, body)
+		}
+		if !bodyContains(body, `"sink_address":"`+want+`"`) {
+			t.Errorf("địa chỉ %q lưu thành %s, muốn %q", input, body, want)
+		}
+	}
+}
+
+func TestPublishSinkAppearsInSettingsAndAffectsOutput(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+
+	resp, body := h.do(http.MethodPut, "/api/v1/settings/publish",
+		map[string]any{"sink_address": "127.0.0.1"})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("đổi địa chỉ = %d: %s", resp.StatusCode, body)
+	}
+
+	resp, body = h.do(http.MethodGet, "/api/v1/settings", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /settings = %d: %s", resp.StatusCode, body)
+	}
+	if !bodyContains(body, `"sink_address":"127.0.0.1"`) {
+		t.Errorf("địa chỉ không có trong /settings: %s", body)
+	}
+}
+
+func TestPublishSinkNeedsAdmin(t *testing.T) {
+	h := newHarness(t)
+
+	resp, _ := h.do(http.MethodPut, "/api/v1/settings/publish",
+		map[string]any{"sink_address": "127.0.0.1"})
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("chưa đăng nhập = %d, muốn 401", resp.StatusCode)
 	}
 }

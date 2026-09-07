@@ -23,6 +23,7 @@ import (
 	"github.com/benji/dnsguard/internal/events"
 	"github.com/benji/dnsguard/internal/graph"
 	"github.com/benji/dnsguard/internal/ingest"
+	"github.com/benji/dnsguard/internal/monitor"
 	"github.com/benji/dnsguard/internal/publish"
 	"github.com/benji/dnsguard/internal/store"
 	"github.com/benji/dnsguard/internal/web"
@@ -62,7 +63,7 @@ func run() error {
 	defer stop()
 
 	bus := events.NewBroker(log)
-	publisher := publish.New(db, cfg.ListsDir, cfg.PublishMinRatio, log)
+	publisher := publish.New(db, cfg.ListsDir, cfg.PublishMinRatio, cfg.PublishSink, log)
 	syncer := catalog.New(db, log)
 	builder := graph.New(db, log)
 	enrichers := buildEnrichers(cfg, log)
@@ -107,6 +108,10 @@ func run() error {
 
 	wg.Go(func() {
 		runner.Run(ctx)
+	})
+
+	wg.Go(func() {
+		monitor.Run(ctx, monitor.New(), db, cfg.ResourceSampleEvery, log)
 	})
 
 	<-ctx.Done()
@@ -215,6 +220,39 @@ func applyStoredAnalysisSetting(ctx context.Context, db *store.Store, cfg config
 
 	log.Info("phân tích HTTP", "enabled", effective,
 		"nguon", map[bool]string{true: "cài đặt", false: "mặc định"}[enabled != cfg.HTTPAnalysisEnabled])
+
+	applyStoredVTKey(ctx, db, cfg, enrichers, log)
+}
+
+// applyStoredVTKey áp khóa VirusTotal đã lưu trên giao diện vào nguồn đang chạy.
+//
+// Khóa nhập trên giao diện thắng biến môi trường: nó mới hơn và là hành động có chủ
+// ý của người quản trị, trong khi biến môi trường thường nằm trong file compose từ
+// lần cài đặt đầu.
+func applyStoredVTKey(ctx context.Context, db *store.Store, cfg config.Config,
+	enrichers *enrich.Registry, log *slog.Logger) {
+
+	src, ok := enrichers.Get("vt")
+	if !ok {
+		return
+	}
+	vt, ok := enrich.Unwrap(src).(*enrich.VTEnricher)
+	if !ok {
+		return
+	}
+
+	var stored string
+	if ok, err := db.GetSetting(ctx, store.SettingVTAPIKey, &stored); err != nil {
+		log.Warn("không đọc được khóa VirusTotal đã lưu", "err", err)
+		return
+	} else if !ok || stored == "" {
+		return
+	}
+
+	vt.SetAPIKey(stored)
+	enrichers.SetEnabled("vt", cfg.ExternalEnabled)
+	// Không log khóa, chỉ log việc đã nạp.
+	log.Info("đã nạp khóa API VirusTotal từ cài đặt")
 }
 
 // ensureFirstAdmin tạo tài khoản quản trị đầu tiên khi CSDL còn trống.
