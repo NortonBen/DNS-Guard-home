@@ -722,7 +722,7 @@ Nếu bề mặt API lớn thêm đáng kể, sinh code từ OpenAPI là bước
 | `PUT /settings/publish` | Địa chỉ IP mọi domain bị chặn trỏ về trong file hosts |
 | `POST /settings/lookup/:kind/refresh` | Tải lại bảng tra cứu cục bộ |
 | `GET /stats/resources` | RAM và CPU của chính dịch vụ, gộp theo khoảng |
-| `GET /graph` | Bản đồ quan hệ toàn mạng |
+| `GET /graph` | Bản đồ quan hệ toàn mạng; bậc đếm quan hệ theo cả hai chiều |
 | `GET /metrics` | Chỉ số Prometheus; bảo vệ bằng bearer token nếu có cấu hình |
 
 ### Khóa API VirusTotal

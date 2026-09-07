@@ -332,6 +332,20 @@ Nút chọn theo bậc giảm dần để các hub nổi lên trước, và ch�
 nằm trong tập nút đã chọn. Khi bị cắt bớt thì nói ra bằng một dòng cảnh báo — im lặng
 cắt sẽ khiến người xem tưởng mình đang nhìn toàn bộ.
 
+Bậc đếm quan hệ theo **cả hai chiều**. `cname_to` là loại duy nhất lưu một chiều, nên
+đếm riêng chiều đi ra sẽ cho một hub adtech có ba trăm domain trỏ vào bậc bằng không —
+đúng nút đáng xem nhất lại bị bộ lọc "số quan hệ tối thiểu" giấu đi.
+
+Nhãn đặt theo **va chạm thật** chứ không theo ngưỡng bậc: đo bề rộng từng chuỗi rồi bỏ
+qua nhãn nào đè lên nhãn đã vẽ. Ngưỡng theo bậc không biết hai nhãn có chồng nhau hay
+không, nên ở một mạng nhiều hub thì hàng trăm nhãn cùng vượt ngưỡng và chồng thành đám
+chữ không đọc được. Cách này cũng tự tốt lên khi phóng to, vì càng phóng càng nhiều chỗ.
+
+Bấm là **chọn**, không phải mở trang. Nút đang chọn cùng hàng xóm được tô sáng, phần
+còn lại mờ đi, và một bảng bên dưới liệt kê hàng xóm để bấm chuyển tiếp mà không rời
+màn hình. Mở trang chi tiết là một nút riêng, hoặc bấm đúp. Rời trang ngay khi chạm vào
+một chấm khiến không thể xem xét đồ thị, mà xem xét mới là việc của màn này.
+
 ### 4.10 Tài nguyên `/resources`
 
 RAM và CPU của chính DNSGuard, chọn khoảng từ 12 giờ tới 30 ngày. Hai biểu đồ: CPU

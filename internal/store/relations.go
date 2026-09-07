@@ -294,19 +294,32 @@ func (s *Store) Network(ctx context.Context, f NetworkFilter) (NetworkGraph, err
 		}
 	}
 
-	// Bậc tính trên cột from_id là đủ: ba trong bốn loại cạnh lưu cả hai chiều, còn
-	// cname_to có hướng và chiều đi ra mới là chiều mang thông tin.
+	// Bậc đếm quan hệ chạm vào domain theo *cả hai chiều*.
+	//
+	// Đếm riêng cột from_id thì hụt đúng thứ màn này sinh ra để tìm: cname_to là loại
+	// duy nhất lưu một chiều, và một hub adtech có ba trăm domain trỏ CNAME vào sẽ ra
+	// bậc bằng không từ những cạnh đó — tức là hub bị lọc mất ở ngay bộ lọc "số quan
+	// hệ tối thiểu", trong khi nó chính là nút đáng xem nhất.
+	//
+	// UNION chứ không UNION ALL: ba loại vô hướng lưu sẵn cả hai chiều, nên gộp thẳng
+	// sẽ đếm mỗi quan hệ hai lần và bậc của chúng phồng lên gấp đôi so với cname_to.
 	args := append([]any{}, kindArgs...)
+	args = append(args, f.MinStrength)
+	args = append(args, kindArgs...)
 	args = append(args, f.MinStrength)
 	args = append(args, statusArgs...)
 	args = append(args, minDegree, limit)
 
 	rows, err := s.r.QueryContext(ctx, `
 		WITH degree AS (
-		  SELECT from_id AS id, count(*) AS deg
-		  FROM relations
-		  WHERE kind IN (`+kindHolders+`) AND strength >= ?
-		  GROUP BY from_id
+		  SELECT id, count(*) AS deg FROM (
+		    SELECT from_id AS id, to_id AS other, kind FROM relations
+		    WHERE kind IN (`+kindHolders+`) AND strength >= ?
+		    UNION
+		    SELECT to_id AS id, from_id AS other, kind FROM relations
+		    WHERE kind IN (`+kindHolders+`) AND strength >= ?
+		  )
+		  GROUP BY id
 		)
 		SELECT d.id, d.name, d.etld1, d.status, coalesce(c.key, ''), degree.deg
 		FROM degree

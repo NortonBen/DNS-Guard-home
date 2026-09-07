@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"testing"
 )
 
@@ -66,8 +67,11 @@ func TestNetworkReturnsClusterAndCountsDegree(t *testing.T) {
 	if g.Nodes[0].ID != hubID {
 		t.Errorf("nút đầu = %q, muốn hub x.adtech.net", g.Nodes[0].Name)
 	}
-	if g.Nodes[0].Degree != 3 {
-		t.Errorf("bậc của hub = %d, muốn 3", g.Nodes[0].Degree)
+	// Sáu chứ không phải ba: mỗi thành viên nối với hub bằng hai quan hệ khác loại —
+	// một cname_to đi vào và một same_asn. Con số cũ là hệ quả của việc chỉ đếm chiều
+	// đi ra, và chính nó giấu mất các hub khỏi bộ lọc bậc tối thiểu.
+	if g.Nodes[0].Degree != 6 {
+		t.Errorf("bậc của hub = %d, muốn 6 (3 cname_to đi vào + 3 same_asn)", g.Nodes[0].Degree)
 	}
 
 	// Mọi cạnh phải có cả hai đầu nằm trong tập nút trả về; cạnh trỏ ra ngoài sẽ vẽ
@@ -139,4 +143,79 @@ func TestNetworkReportsTruncation(t *testing.T) {
 	if g.TotalNodes <= len(g.Nodes) {
 		t.Errorf("TotalNodes = %d, phải lớn hơn số nút trả về", g.TotalNodes)
 	}
+}
+
+func TestNetworkDegreeCountsIncomingCNAMEs(t *testing.T) {
+	// Hub adtech là nút đáng xem nhất trên bản đồ toàn mạng, và nó lộ ra qua số domain
+	// trỏ CNAME *vào* nó. Đếm riêng chiều đi ra thì hub ra bậc 0 và bị chính bộ lọc
+	// "số quan hệ tối thiểu" giấu đi.
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	hub := seedNamedDomain(t, s, "quangcaonoidia.vn")
+	for i := range 5 {
+		sub := seedNamedDomain(t, s, fmt.Sprintf("px%d.trangbao.vn", i))
+		if err := s.SaveRelation(ctx, sub, hub, RelCNAME, 1.0, nil); err != nil {
+			t.Fatalf("lưu quan hệ: %v", err)
+		}
+	}
+
+	g, err := s.Network(ctx, NetworkFilter{Limit: 50, MinDegree: 2})
+	if err != nil {
+		t.Fatalf("network: %v", err)
+	}
+
+	var hubDegree int
+	for _, n := range g.Nodes {
+		if n.ID == hub {
+			hubDegree = n.Degree
+		}
+	}
+	if hubDegree != 5 {
+		t.Errorf("bậc của hub = %d, muốn 5 (năm domain trỏ CNAME vào)", hubDegree)
+	}
+}
+
+func TestNetworkDegreeDoesNotDoubleCountUndirectedKinds(t *testing.T) {
+	// same_asn, same_cert và co_occurs lưu sẵn cả hai chiều. Gộp hai chiều mà không
+	// khử trùng thì bậc của chúng phồng gấp đôi, và thang so sánh với cname_to hỏng.
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	a := seedNamedDomain(t, s, "mot.vn")
+	b := seedNamedDomain(t, s, "hai.vn")
+	c := seedNamedDomain(t, s, "ba.vn")
+
+	for _, peer := range []int64{b, c} {
+		if err := s.SaveRelation(ctx, a, peer, RelSameASN, 1.0, nil); err != nil {
+			t.Fatalf("lưu quan hệ: %v", err)
+		}
+	}
+
+	g, err := s.Network(ctx, NetworkFilter{Limit: 50, MinDegree: 1})
+	if err != nil {
+		t.Fatalf("network: %v", err)
+	}
+
+	for _, n := range g.Nodes {
+		if n.ID == a && n.Degree != 2 {
+			t.Errorf("bậc = %d, muốn 2 (hai hàng xóm, không phải bốn)", n.Degree)
+		}
+	}
+}
+
+// seedNamedDomain tạo một domain tối thiểu và trả về id.
+func seedNamedDomain(t *testing.T, s *Store, name string) int64 {
+	t.Helper()
+	now := Now()
+	res, err := s.Writer().Exec(`
+		INSERT INTO domains (name, name_rev, etld1, status, origin,
+		                     first_seen, last_seen, created_at, updated_at)
+		VALUES (?, ?, ?, 'new', 'discovered', ?, ?, ?, ?)`,
+		name, name, name, now, now, now, now)
+	if err != nil {
+		t.Fatalf("tạo domain %q: %v", name, err)
+	}
+	id, _ := res.LastInsertId()
+	return id
 }
