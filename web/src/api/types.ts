@@ -306,3 +306,21 @@ export interface Settings {
   lookup_tables: LookupTable[];
   system: SystemInfo;
 }
+
+export interface NetworkGraphNode {
+  id: number;
+  name: string;
+  etld1: string;
+  status: DomainStatus;
+  category?: string;
+  /** Số quan hệ của nút; giao diện vẽ nút to nhỏ theo giá trị này. */
+  degree: number;
+}
+
+export interface NetworkGraph {
+  nodes: NetworkGraphNode[];
+  edges: GraphEdge[];
+  total_nodes: number;
+  total_edges: number;
+  truncated: boolean;
+}

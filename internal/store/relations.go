@@ -229,3 +229,168 @@ func (s *Store) CoOccurrences(ctx context.Context, windowDays, minCount int) (
 	}
 	return pairs, totals, grand, totalRows.Err()
 }
+
+// NetworkFilter là bộ lọc cho đồ thị toàn mạng.
+type NetworkFilter struct {
+	Kinds       []string
+	Statuses    []string
+	MinStrength float64
+	// MinDegree loại các cặp đứng lẻ: một cạnh đơn độc không cho biết điều gì về cụm.
+	MinDegree int
+	Limit     int
+}
+
+// NetworkNode là một nút trong đồ thị toàn mạng.
+type NetworkNode struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	ETLD1    string `json:"etld1"`
+	Status   string `json:"status"`
+	Category string `json:"category,omitempty"`
+	// Degree là số quan hệ của nút. Giao diện vẽ nút to nhỏ theo giá trị này.
+	Degree int `json:"degree"`
+}
+
+// NetworkGraph là ảnh chụp quan hệ của cả mạng.
+type NetworkGraph struct {
+	Nodes []NetworkNode `json:"nodes"`
+	Edges []GraphEdge   `json:"edges"`
+	// TotalNodes là số domain có quan hệ trước khi cắt bớt, để giao diện nói rõ đang
+	// hiển thị bao nhiêu phần.
+	TotalNodes int  `json:"total_nodes"`
+	TotalEdges int  `json:"total_edges"`
+	Truncated  bool `json:"truncated"`
+}
+
+// Network dựng đồ thị quan hệ của toàn mạng.
+//
+// Khác GraphFor ở chỗ không có nút gốc: câu hỏi ở đây không phải "domain này liên
+// quan tới gì" mà "mạng này có những cụm hạ tầng nào". Vì thế cách chọn dữ liệu cũng
+// khác — ưu tiên nút có nhiều quan hệ nhất, vì chúng là trung tâm của các cụm, còn
+// nút chỉ có một cạnh thì nhìn vào cũng không thấy gì.
+func (s *Store) Network(ctx context.Context, f NetworkFilter) (NetworkGraph, error) {
+	limit := f.Limit
+	if limit <= 0 || limit > 1000 {
+		limit = 300
+	}
+	kinds := f.Kinds
+	if len(kinds) == 0 {
+		kinds = []string{RelCNAME, RelSameASN, RelSameCert, RelCoOccurs}
+	}
+	minDegree := max(f.MinDegree, 1)
+
+	kindHolders := placeholders(len(kinds))
+	kindArgs := make([]any, len(kinds))
+	for i, k := range kinds {
+		kindArgs[i] = k
+	}
+
+	statusClause := ""
+	statusArgs := []any{}
+	if len(f.Statuses) > 0 {
+		statusClause = " AND d.status IN (" + placeholders(len(f.Statuses)) + ")"
+		for _, st := range f.Statuses {
+			statusArgs = append(statusArgs, st)
+		}
+	}
+
+	// Bậc tính trên cột from_id là đủ: ba trong bốn loại cạnh lưu cả hai chiều, còn
+	// cname_to có hướng và chiều đi ra mới là chiều mang thông tin.
+	args := append([]any{}, kindArgs...)
+	args = append(args, f.MinStrength)
+	args = append(args, statusArgs...)
+	args = append(args, minDegree, limit)
+
+	rows, err := s.r.QueryContext(ctx, `
+		WITH degree AS (
+		  SELECT from_id AS id, count(*) AS deg
+		  FROM relations
+		  WHERE kind IN (`+kindHolders+`) AND strength >= ?
+		  GROUP BY from_id
+		)
+		SELECT d.id, d.name, d.etld1, d.status, coalesce(c.key, ''), degree.deg
+		FROM degree
+		JOIN domains d ON d.id = degree.id
+		LEFT JOIN categories c ON c.id = d.category_id
+		WHERE 1=1`+statusClause+`
+		  AND degree.deg >= ?
+		ORDER BY degree.deg DESC, d.query_count DESC
+		LIMIT ?`, args...)
+	if err != nil {
+		return NetworkGraph{}, fmt.Errorf("list network nodes: %w", err)
+	}
+	defer rows.Close()
+
+	var g NetworkGraph
+	ids := []any{}
+	for rows.Next() {
+		var n NetworkNode
+		if err := rows.Scan(&n.ID, &n.Name, &n.ETLD1, &n.Status, &n.Category, &n.Degree); err != nil {
+			return NetworkGraph{}, fmt.Errorf("scan network node: %w", err)
+		}
+		g.Nodes = append(g.Nodes, n)
+		ids = append(ids, n.ID)
+	}
+	if err := rows.Err(); err != nil {
+		return NetworkGraph{}, err
+	}
+	if len(ids) == 0 {
+		return g, nil
+	}
+
+	// Chỉ giữ cạnh mà cả hai đầu đều nằm trong tập nút đã chọn: cạnh trỏ ra ngoài tập
+	// sẽ vẽ thành đường cụt không có đích.
+	idHolders := placeholders(len(ids))
+	edgeArgs := append([]any{}, kindArgs...)
+	edgeArgs = append(edgeArgs, f.MinStrength)
+	edgeArgs = append(edgeArgs, ids...)
+	edgeArgs = append(edgeArgs, ids...)
+	edgeArgs = append(edgeArgs, limit*8)
+
+	edgeRows, err := s.r.QueryContext(ctx, `
+		SELECT from_id, to_id, kind, strength
+		FROM relations
+		WHERE kind IN (`+kindHolders+`) AND strength >= ?
+		  AND from_id IN (`+idHolders+`) AND to_id IN (`+idHolders+`)
+		ORDER BY strength DESC
+		LIMIT ?`, edgeArgs...)
+	if err != nil {
+		return NetworkGraph{}, fmt.Errorf("list network edges: %w", err)
+	}
+	defer edgeRows.Close()
+
+	for edgeRows.Next() {
+		var e GraphEdge
+		if err := edgeRows.Scan(&e.From, &e.To, &e.Kind, &e.Strength); err != nil {
+			return NetworkGraph{}, fmt.Errorf("scan network edge: %w", err)
+		}
+		g.Edges = append(g.Edges, e)
+	}
+	if err := edgeRows.Err(); err != nil {
+		return NetworkGraph{}, err
+	}
+
+	// Tổng số thật, để giao diện nói rõ đang hiển thị bao nhiêu phần thay vì im lặng
+	// cắt bớt.
+	countArgs := append([]any{}, kindArgs...)
+	countArgs = append(countArgs, f.MinStrength, minDegree)
+	if err := s.r.QueryRowContext(ctx, `
+		SELECT count(*) FROM (
+		  SELECT from_id FROM relations
+		  WHERE kind IN (`+kindHolders+`) AND strength >= ?
+		  GROUP BY from_id HAVING count(*) >= ?
+		)`, countArgs...).Scan(&g.TotalNodes); err != nil {
+		return NetworkGraph{}, fmt.Errorf("count network nodes: %w", err)
+	}
+
+	totalEdgeArgs := append([]any{}, kindArgs...)
+	totalEdgeArgs = append(totalEdgeArgs, f.MinStrength)
+	if err := s.r.QueryRowContext(ctx, `
+		SELECT count(*) FROM relations WHERE kind IN (`+kindHolders+`) AND strength >= ?`,
+		totalEdgeArgs...).Scan(&g.TotalEdges); err != nil {
+		return NetworkGraph{}, fmt.Errorf("count network edges: %w", err)
+	}
+
+	g.Truncated = g.TotalNodes > len(g.Nodes)
+	return g, nil
+}

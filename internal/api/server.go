@@ -97,6 +97,7 @@ func (s *Server) Handler() http.Handler {
 			r.Get("/domains/lookup", s.handleLookup)
 			r.Get("/domains/{id}", s.handleGetDomain)
 			r.Get("/domains/{id}/graph", s.handleDomainGraph)
+			r.Get("/graph", s.handleNetworkGraph)
 			r.Get("/domains/{id}/timeline", s.handleDomainTimeline)
 			r.Get("/categories", s.handleListCategories)
 			r.Get("/sources", s.handleListSources)

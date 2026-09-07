@@ -19,6 +19,7 @@ import type {
   Page,
   RelationGraph,
   AnalysisSettings,
+  NetworkGraph,
   Session,
   Settings,
   Snapshot,
@@ -39,6 +40,7 @@ export const qk = {
   domains: (filters: DomainFilters) => ['domains', filters] as const,
   domain: (id: number) => ['domain', id] as const,
   graph: (id: number, kinds: string) => ['domain', id, 'graph', kinds] as const,
+  network: (filters: NetworkFilters) => ['network-graph', filters] as const,
   timeline: (id: number) => ['domain', id, 'timeline'] as const,
   categories: () => ['categories'] as const,
   weights: () => ['weights'] as const,
@@ -52,6 +54,13 @@ export const qk = {
   settings: () => ['settings'] as const,
   job: (id: string) => ['job', id] as const,
 };
+
+export interface NetworkFilters {
+  kinds: string;
+  status: string;
+  limit: number;
+  min_degree: number;
+}
 
 export interface DomainFilters {
   status?: string;
@@ -493,5 +502,19 @@ export function useRefreshLookup() {
         body: { url: url ?? '' },
       }),
     onSuccess: () => client.invalidateQueries({ queryKey: qk.settings() }),
+  });
+}
+
+/**
+ * Đồ thị quan hệ của toàn mạng.
+ *
+ * Giữ lâu hơn các truy vấn khác: cạnh co_occurs tính lại theo lô hằng đêm, nên hỏi
+ * lại sau vài chục giây cũng cho đúng kết quả cũ.
+ */
+export function useNetworkGraph(filters: NetworkFilters) {
+  return useQuery({
+    queryKey: qk.network(filters),
+    queryFn: () => api<NetworkGraph>(`/graph${query({ ...filters })}`),
+    staleTime: 5 * 60_000,
   });
 }

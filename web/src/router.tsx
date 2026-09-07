@@ -80,6 +80,12 @@ const publishRoute = createRoute({
   component: lazyRouteComponent(() => import('@/routes/publish'), 'PublishScreen'),
 });
 
+const networkRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/graph',
+  component: lazyRouteComponent(() => import('@/routes/network'), 'NetworkScreen'),
+});
+
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/settings',
@@ -102,6 +108,7 @@ const routeTree = rootRoute.addChildren([
   manualRoute,
   sourcesRoute,
   publishRoute,
+  networkRoute,
   settingsRoute,
   lookupRoute,
 ]);

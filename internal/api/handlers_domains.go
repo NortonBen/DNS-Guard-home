@@ -470,3 +470,32 @@ func pathID(w http.ResponseWriter, r *http.Request, key string) (int64, bool) {
 	}
 	return id, true
 }
+
+// handleNetworkGraph trả về đồ thị quan hệ của toàn mạng.
+//
+// Khác endpoint đồ thị của một domain: ở đây không có nút gốc, câu hỏi là "mạng này
+// có những cụm hạ tầng nào" chứ không phải "domain này liên quan tới gì".
+func (s *Server) handleNetworkGraph(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+
+	minStrength := 0.0
+	if v, err := strconv.ParseFloat(q.Get("min_strength"), 64); err == nil {
+		minStrength = v
+	}
+
+	g, err := s.store.Network(r.Context(), store.NetworkFilter{
+		Kinds:       splitCSV(q.Get("kinds")),
+		Statuses:    splitCSV(q.Get("status")),
+		MinStrength: minStrength,
+		MinDegree:   atoiOr(q.Get("min_degree"), 1),
+		Limit:       atoiOr(q.Get("limit"), 300),
+	})
+	if err != nil {
+		fail(w, s.log, err)
+		return
+	}
+
+	g.Nodes = orEmpty(g.Nodes)
+	g.Edges = orEmpty(g.Edges)
+	writeJSON(w, http.StatusOK, g)
+}

@@ -37,6 +37,7 @@ const navigation: NavGroup[] = [
     items: [
       { to: '/triage', label: 'Hàng đợi duyệt', adminOnly: true, badge: 'pending' },
       { to: '/domains', label: 'Danh sách domain' },
+      { to: '/graph', label: 'Bản đồ quan hệ' },
       { to: '/lookup', label: 'Tra cứu nhanh' },
     ],
   },
