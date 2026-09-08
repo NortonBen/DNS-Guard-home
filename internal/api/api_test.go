@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -966,4 +968,120 @@ func scoreOf(t *testing.T, h *harness, id int64) float64 {
 		t.Fatalf("đọc điểm: %v", err)
 	}
 	return score
+}
+
+func TestCategoryCountsSeparateLabelledFromPublished(t *testing.T) {
+	// Cột số domain nằm ngay cạnh cột đường dẫn file, nên người vận hành đọc nó thành
+	// "số dòng trong file". Nếu nó đếm cả domain chưa chặn thì file luôn ít hơn con số
+	// hiển thị, và điều đó trông y hệt việc hệ thống đánh mất domain.
+	h := newHarness(t)
+	h.login()
+	ctx := context.Background()
+
+	var adsID int64
+	if err := h.store.Reader().QueryRow(
+		`SELECT id FROM categories WHERE key = 'ads'`).Scan(&adsID); err != nil {
+		t.Fatalf("đọc phân loại ads: %v", err)
+	}
+
+	// Bảy domain đã chặn, bốn domain mang nhãn nhưng ở trạng thái khác.
+	seedCategorised(t, h, adsID, "blocked", 7)
+	seedCategorised(t, h, adsID, "staging", 2)
+	seedCategorised(t, h, adsID, "new", 1)
+	seedCategorised(t, h, adsID, "allowed", 1)
+
+	ads := categoryByKey(t, h, "ads")
+	if got := ads["domain_count"]; got != float64(11) {
+		t.Errorf("domain_count = %v, muốn 11 (mọi domain mang nhãn)", got)
+	}
+	if got := ads["blocked_count"]; got != float64(7) {
+		t.Errorf("blocked_count = %v, muốn 7", got)
+	}
+	if got := ads["published_count"]; got != float64(7) {
+		t.Errorf("published_count = %v, muốn 7", got)
+	}
+
+	// Và con số đó phải khớp đúng số dòng file xuất bản ra.
+	publisher := publish.New(h.store, h.listsDir, 0, "",
+		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if _, err := publisher.PublishAll(ctx, []string{"ads"}, "test"); err != nil {
+		t.Fatalf("xuất bản: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(h.listsDir, "ads.txt"))
+	if err != nil {
+		t.Fatalf("đọc ads.txt: %v", err)
+	}
+	lines := 0
+	for _, line := range strings.Split(string(raw), "\n") {
+		if line != "" && !strings.HasPrefix(line, "#") {
+			lines++
+		}
+	}
+	if lines != 7 {
+		t.Errorf("file có %d dòng, muốn 7 — phải khớp published_count", lines)
+	}
+}
+
+func TestPublishedCountIsZeroWhenCategoryDisabled(t *testing.T) {
+	// Tắt xuất bản thì file rỗng bất kể có bao nhiêu domain đang chặn, vì truy vấn
+	// xuất bản có điều kiện enabled = 1. Con số hiển thị phải nói đúng điều đó.
+	h := newHarness(t)
+	h.login()
+
+	var cdnID int64
+	if err := h.store.Reader().QueryRow(
+		`SELECT id FROM categories WHERE key = 'cdn'`).Scan(&cdnID); err != nil {
+		t.Fatalf("đọc phân loại cdn: %v", err)
+	}
+	seedCategorised(t, h, cdnID, "blocked", 5)
+
+	cdn := categoryByKey(t, h, "cdn")
+	if cdn["enabled"] != false {
+		t.Skip("phân loại cdn mặc định đang bật, test này giả định nó tắt")
+	}
+	if got := cdn["blocked_count"]; got != float64(5) {
+		t.Errorf("blocked_count = %v, muốn 5", got)
+	}
+	if got := cdn["published_count"]; got != float64(0) {
+		t.Errorf("published_count = %v, muốn 0 khi tắt xuất bản", got)
+	}
+}
+
+// seedCategorised tạo n domain mang một nhãn và một trạng thái.
+func seedCategorised(t *testing.T, h *harness, categoryID int64, status string, n int) {
+	t.Helper()
+	now := store.Now()
+	for i := range n {
+		name := fmt.Sprintf("%s%d-%d.vidu.vn", status, categoryID, i)
+		if _, err := h.store.Writer().Exec(`
+			INSERT INTO domains (name, name_rev, etld1, status, origin, category_id,
+			                     first_seen, last_seen, created_at, updated_at)
+			VALUES (?, ?, 'vidu.vn', ?, 'discovered', ?, ?, ?, ?, ?)`,
+			name, name, status, categoryID, now, now, now, now); err != nil {
+			t.Fatalf("tạo domain %q: %v", name, err)
+		}
+	}
+}
+
+// categoryByKey đọc một phân loại từ API dưới dạng map.
+func categoryByKey(t *testing.T, h *harness, key string) map[string]any {
+	t.Helper()
+	resp, body := h.do(http.MethodGet, "/api/v1/categories", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /categories = %d: %s", resp.StatusCode, body)
+	}
+	var out struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(body, &out); err != nil {
+		t.Fatalf("giải mã: %v", err)
+	}
+	for _, item := range out.Items {
+		if item["key"] == key {
+			return item
+		}
+	}
+	t.Fatalf("không tìm thấy phân loại %q", key)
+	return nil
 }

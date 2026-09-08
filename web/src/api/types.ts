@@ -173,7 +173,12 @@ export interface CategoryDetail {
   score_threshold: number;
   publish_path: string;
   sort_order: number;
+  /** Mọi domain mang nhãn này, ở bất kỳ trạng thái nào. */
   domain_count: number;
+  /** Riêng phần đang chặn. */
+  blocked_count: number;
+  /** Số dòng thật sự nằm trong file xuất bản; bằng 0 khi tắt xuất bản. */
+  published_count: number;
 }
 
 export interface WeightEntry {

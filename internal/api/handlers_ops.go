@@ -18,11 +18,20 @@ import (
 )
 
 // handleListCategories trả về taxonomy kèm số domain mỗi loại.
+//
+// Hai con số chứ không một. domain_count đếm mọi domain mang nhãn này ở bất kỳ trạng
+// thái nào; blocked_count đếm riêng phần đang chặn — và đó mới là số dòng thật sự nằm
+// trong file xuất bản, vì truy vấn xuất bản lọc theo status = 'blocked'.
+//
+// Trả về một con số duy nhất nằm ngay cạnh cột đường dẫn file là cách chắc chắn khiến
+// người vận hành đọc nó thành "số dòng trong file" rồi tưởng hệ thống mất domain.
 func (s *Server) handleListCategories(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.store.Reader().QueryContext(r.Context(), `
 		SELECT c.id, c.key, c.label_vi, c.label_en, c.description, c.color, c.enabled,
 		       c.score_threshold, c.publish_path, c.sort_order,
-		       (SELECT count(*) FROM domains d WHERE d.category_id = c.id) AS domain_count
+		       (SELECT count(*) FROM domains d WHERE d.category_id = c.id) AS domain_count,
+		       (SELECT count(*) FROM domains d
+		         WHERE d.category_id = c.id AND d.status = 'blocked') AS blocked_count
 		FROM categories c ORDER BY c.sort_order LIMIT 50`)
 	if err != nil {
 		fail(w, s.log, err)
@@ -33,13 +42,13 @@ func (s *Server) handleListCategories(w http.ResponseWriter, r *http.Request) {
 	items := []map[string]any{}
 	for rows.Next() {
 		var (
-			id, sortOrder, domainCount               int64
+			id, sortOrder, domainCount, blockedCount int64
 			key, labelVi, labelEn, desc, color, path string
 			enabled                                  bool
 			threshold                                float64
 		)
 		if err := rows.Scan(&id, &key, &labelVi, &labelEn, &desc, &color, &enabled,
-			&threshold, &path, &sortOrder, &domainCount); err != nil {
+			&threshold, &path, &sortOrder, &domainCount, &blockedCount); err != nil {
 			fail(w, s.log, err)
 			return
 		}
@@ -48,6 +57,11 @@ func (s *Server) handleListCategories(w http.ResponseWriter, r *http.Request) {
 			"description": desc, "color": color, "enabled": enabled,
 			"score_threshold": threshold, "publish_path": path,
 			"sort_order": sortOrder, "domain_count": domainCount,
+			"blocked_count": blockedCount,
+			// Tắt xuất bản thì file rỗng bất kể có bao nhiêu domain đang chặn: truy
+			// vấn xuất bản có điều kiện c.enabled = 1. Tính sẵn ở đây để giao diện
+			// không phải lặp lại quy tắc đó.
+			"published_count": publishedCount(enabled, blockedCount),
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -108,6 +122,14 @@ func (s *Server) handleGetWeights(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"weights": items})
+}
+
+// publishedCount là số dòng sẽ có trong file của một phân loại.
+func publishedCount(enabled bool, blocked int64) int64 {
+	if !enabled {
+		return 0
+	}
+	return blocked
 }
 
 type updateWeightsRequest struct {

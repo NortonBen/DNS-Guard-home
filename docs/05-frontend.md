@@ -269,6 +269,15 @@ là bình thường với CDN, và chính khoảng lệch đó mới đáng đ�
 
 ### 4.5 Phân loại `/categories`
 
+Bảng phân loại có **hai** cột số chứ không một: *trong file* là số dòng thật sự nằm
+trong file đã xuất bản, *đã gán nhãn* đếm mọi domain mang nhãn đó ở bất kỳ trạng thái
+nào. Chỉ domain ở trạng thái `blocked` mới được ghi ra, và truy vấn xuất bản còn lọc
+theo `categories.enabled`, nên hai con số lệch nhau là chuyện bình thường.
+
+Một cột duy nhất đặt cạnh cột đường dẫn file sẽ được đọc thành "số dòng trong file";
+khi nó đếm cả domain chưa chặn thì file luôn ít hơn con số hiển thị, và điều đó trông
+y hệt việc hệ thống đánh mất domain.
+
 Danh sách phân loại, sửa được ngưỡng điểm, bật/tắt, đổi màu. Mỗi dòng hiện số domain
 đang thuộc phân loại đó và đường dẫn xuất bản.
 

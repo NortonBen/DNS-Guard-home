@@ -73,7 +73,8 @@ export function CategoriesScreen() {
               <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500 dark:border-slate-800 dark:text-slate-400">
                 <th scope="col" className="py-1.5">Phân loại</th>
                 <th scope="col" className="py-1.5">Đường dẫn xuất bản</th>
-                <th scope="col" className="py-1.5 text-right">Số domain</th>
+                <th scope="col" className="py-1.5 text-right">Trong file</th>
+                <th scope="col" className="py-1.5 text-right">Đã gán nhãn</th>
                 <th scope="col" className="py-1.5 text-right">Ngưỡng điểm</th>
                 <th scope="col" className="py-1.5 text-center">Xuất bản</th>
               </tr>
@@ -95,7 +96,29 @@ export function CategoriesScreen() {
                   <td className="py-2 font-mono text-xs text-slate-600 dark:text-slate-300">
                     /lists/{category.publish_path}
                   </td>
+                  {/* Số dòng thật trong file, không phải số domain mang nhãn. Chỉ có
+                      domain ở trạng thái "đã chặn" mới được xuất bản, nên hai con số
+                      lệch nhau là chuyện bình thường — và trước đây chỉ hiện con số
+                      lớn hơn khiến người vận hành tưởng file bị mất domain. */}
                   <td className="py-2 text-right tabular-nums">
+                    {formatNumber(category.published_count)}
+                    {!category.enabled && category.blocked_count > 0 && (
+                      <span
+                        className="ml-1 text-xs text-amber-600 dark:text-amber-400"
+                        title={`${formatNumber(category.blocked_count)} domain đang chặn nhưng không xuất bản vì phân loại này đã tắt`}
+                      >
+                        ⚠
+                      </span>
+                    )}
+                  </td>
+                  <td
+                    className="py-2 text-right tabular-nums text-slate-500 dark:text-slate-400"
+                    title={
+                      category.domain_count > category.blocked_count
+                        ? `${formatNumber(category.domain_count - category.blocked_count)} domain mang nhãn này nhưng chưa ở trạng thái đã chặn`
+                        : undefined
+                    }
+                  >
                     {formatNumber(category.domain_count)}
                   </td>
                   <td className="py-2 text-right">
@@ -131,6 +154,12 @@ export function CategoriesScreen() {
           </TableScroll>
         )}
         <p className="mt-3 text-xs text-slate-500 dark:text-slate-400">
+          <strong className="font-semibold">Trong file</strong> là số dòng thật sự nằm trong file
+          đã xuất bản — chỉ domain ở trạng thái <em>đã chặn</em> mới được ghi ra.{' '}
+          <strong className="font-semibold">Đã gán nhãn</strong> đếm cả những domain còn đang chờ
+          duyệt hoặc đã cho qua, nên hai con số lệch nhau là bình thường.
+        </p>
+        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
           Tắt xuất bản không xóa nhãn phân loại — domain vẫn được gán nhãn nhưng không nằm trong
           file nào. Hữu ích khi gỡ lỗi mà không muốn mất dữ liệu phân loại.
         </p>
