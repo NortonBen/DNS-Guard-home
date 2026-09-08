@@ -1,0 +1,17 @@
+-- Nguồn đã khớp, đi kèm dải đã khớp ở cột threat.
+--
+-- Tách thành cột riêng chứ không nhồi vào chuỗi cột threat: hai giá trị trả lời hai
+-- câu hỏi khác nhau, và giao diện cần hỏi riêng từng cái.
+--
+-- Có cột này vì từ nay hệ thống đối chiếu với nhiều danh sách cùng lúc, và mỗi danh
+-- sách đòi một mức phản ứng khác: khớp một dải bị chiếm đoạt của Spamhaus DROP nghĩa
+-- là "địa chỉ này nằm trong khu phố xấu", còn khớp ThreatFox nghĩa là "có máy trong
+-- mạng đang nói chuyện với máy chủ điều khiển mã độc". Chỉ nhìn dải thì không phân
+-- biệt được hai việc đó.
+--
+-- Giá trị là khóa nguồn tự mô tả ("spamhaus_drop", "threatfox"), không phải mã nội bộ:
+-- cột này đi thẳng vào hồ sơ điều tra xuất ra ngoài.
+--
+-- NULL nghĩa là chưa đối chiếu lại kể từ khi thêm cột. Job ip_threat quét lại toàn bộ
+-- mỗi giờ nên cột tự đầy, không cần backfill.
+ALTER TABLE domain_ips ADD COLUMN threat_source TEXT;

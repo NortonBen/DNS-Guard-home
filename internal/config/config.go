@@ -23,8 +23,10 @@ type Config struct {
 	ListsDir   string
 	IP2ASNPath string
 	TrancoPath string
-	// IPThreatPath là nơi lưu danh sách hạ tầng độc hại tải về.
-	IPThreatPath string
+	// DROPPath là nơi lưu danh sách dải hạ tầng rogue (Spamhaus DROP) tải về.
+	DROPPath string
+	// ThreatFoxPath là nơi lưu danh sách máy chủ điều khiển mã độc tải về.
+	ThreatFoxPath string
 
 	// Ghi pcap phục vụ điều tra. Mặc định tắt: nó ghi liên tục xuống đĩa, và trên
 	// một máy chạy thẻ SD thì đó là quyết định người vận hành phải tự đưa ra.
@@ -83,13 +85,14 @@ type Config struct {
 // Load đọc cấu hình, áp mặc định và kiểm tra tính hợp lệ.
 func Load() (Config, error) {
 	c := Config{
-		DBPath:       env("DNSGUARD_DB_PATH", "/var/lib/dnsguard/dnsguard.db"),
-		Listen:       env("DNSGUARD_LISTEN", ":8080"),
-		TZSPListen:   env("DNSGUARD_TZSP_LISTEN", ":37008"),
-		ListsDir:     env("DNSGUARD_LISTS_DIR", "/var/lib/dnsguard/lists"),
-		IP2ASNPath:   env("DNSGUARD_IP2ASN_PATH", "/var/lib/dnsguard/ip2asn.tsv.gz"),
-		TrancoPath:   env("DNSGUARD_TRANCO_PATH", "/var/lib/dnsguard/tranco.csv.zip"),
-		IPThreatPath: env("DNSGUARD_IPTHREAT_PATH", "/var/lib/dnsguard/ipthreat.txt"),
+		DBPath:        env("DNSGUARD_DB_PATH", "/var/lib/dnsguard/dnsguard.db"),
+		Listen:        env("DNSGUARD_LISTEN", ":8080"),
+		TZSPListen:    env("DNSGUARD_TZSP_LISTEN", ":37008"),
+		ListsDir:      env("DNSGUARD_LISTS_DIR", "/var/lib/dnsguard/lists"),
+		IP2ASNPath:    env("DNSGUARD_IP2ASN_PATH", "/var/lib/dnsguard/ip2asn.tsv.gz"),
+		TrancoPath:    env("DNSGUARD_TRANCO_PATH", "/var/lib/dnsguard/tranco.csv.zip"),
+		DROPPath:      env("DNSGUARD_DROP_PATH", "/var/lib/dnsguard/spamhaus-drop.txt"),
+		ThreatFoxPath: env("DNSGUARD_THREATFOX_PATH", "/var/lib/dnsguard/threatfox.csv.zip"),
 
 		PcapEnabled:    envBool("DNSGUARD_PCAP_ENABLED", false),
 		PcapDir:        env("DNSGUARD_PCAP_DIR", "/var/lib/dnsguard/pcap"),

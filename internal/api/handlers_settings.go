@@ -38,12 +38,10 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request) {
 	if s.enrichers != nil {
 		tables = s.enrichers.Statuses()
 	}
-	// Danh sách hạ tầng độc hại không nằm trong sổ đăng ký nguồn làm giàu — nó tra
-	// theo địa chỉ chứ không theo tên miền — nhưng vẫn là một bảng tra cứu tải về
+	// Các danh sách hạ tầng độc hại không nằm trong sổ đăng ký nguồn làm giàu — chúng
+	// tra theo địa chỉ chứ không theo tên miền — nhưng vẫn là bảng tra cứu tải về
 	// được, nên phải hiện ở màn Cài đặt cùng hai bảng kia.
-	if s.threats != nil {
-		tables = append(tables, s.threats.Status())
-	}
+	tables = append(tables, s.threats.Statuses()...)
 	if tables == nil {
 		tables = []enrich.TableStatus{}
 	}
@@ -397,6 +395,16 @@ func (s *Server) handleUpdateLifecycle(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// knownLookupKind cho biết khóa này có ứng với một bảng tra cứu cục bộ nào không.
+func (s *Server) knownLookupKind(kind string) bool {
+	if s.enrichers != nil {
+		if _, ok := s.enrichers.Reloadables()[kind]; ok {
+			return true
+		}
+	}
+	return s.threats.Has(kind)
+}
+
 type refreshLookupRequest struct {
 	URL string `json:"url"`
 }
@@ -404,7 +412,9 @@ type refreshLookupRequest struct {
 // handleRefreshLookup tải lại một bảng tra cứu cục bộ.
 func (s *Server) handleRefreshLookup(w http.ResponseWriter, r *http.Request) {
 	kind := chi.URLParam(r, "kind")
-	if kind != "asn" && kind != "rank" && kind != "ipthreat" {
+	// Hỏi chính các sổ đăng ký thay vì so với một danh sách cứng: thêm một nguồn đe
+	// dọa mới thì endpoint này phải nhận nó ngay, không phải nhớ sửa thêm chỗ nữa.
+	if !s.knownLookupKind(kind) {
 		writeError(w, http.StatusBadRequest, CodeInvalidInput,
 			"Bảng tra cứu không rõ", map[string]any{"kind": kind})
 		return

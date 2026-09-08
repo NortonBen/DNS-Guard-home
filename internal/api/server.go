@@ -35,7 +35,7 @@ type Server struct {
 	bus       *events.Broker
 	listener  *ingest.Listener
 	enrichers *enrich.Registry
-	threats   *threat.Set
+	threats   *threat.Registry
 	pcap      *pcap.Recorder
 	webFS     fs.FS
 	version   string
@@ -60,7 +60,7 @@ type Options struct {
 	Bus       *events.Broker
 	Listener  *ingest.Listener
 	Enrichers *enrich.Registry
-	Threats   *threat.Set
+	Threats   *threat.Registry
 	Pcap      *pcap.Recorder
 	WebFS     fs.FS
 	Version   string

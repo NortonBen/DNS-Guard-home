@@ -20,10 +20,10 @@ const KindThreatAlert = "threat_alert"
 // Chi phí chấp nhận được vì tra cứu chỉ là vài chục lần tra map trong bộ nhớ, và chỉ
 // những dòng thật sự đổi trạng thái mới bị ghi xuống.
 func (r *Runner) runIPThreat(ctx context.Context) error {
-	if r.threats == nil || !r.threats.Loaded() {
-		// Chưa tải danh sách không phải lỗi: bảng là tuỳ chọn. Báo hỏng mỗi giờ sẽ
-		// chôn những job hỏng thật trong nhật ký.
-		r.log.Info("bỏ qua đối chiếu địa chỉ độc hại: chưa nạp danh sách")
+	if !r.threats.Loaded() {
+		// Chưa tải danh sách nào không phải lỗi: các bảng đều là tuỳ chọn. Báo hỏng
+		// mỗi giờ sẽ chôn những job hỏng thật trong nhật ký.
+		r.log.Info("bỏ qua đối chiếu địa chỉ độc hại: chưa nạp danh sách nào")
 		return nil
 	}
 
@@ -39,16 +39,22 @@ func (r *Runner) runIPThreat(ctx context.Context) error {
 		if err != nil {
 			continue
 		}
-		now := ""
+		now := store.IPThreat{IP: ip}
 		if m, hit := r.threats.Lookup(addr); hit {
-			now = m.Prefix
+			now.Threat, now.Source = m.Prefix, m.Source
 		}
-		if now == was {
+		// So cả nguồn lẫn dải: một địa chỉ chuyển từ danh sách này sang danh sách khác
+		// là thông tin mới, kể cả khi dải khớp tình cờ giống nhau.
+		if now.Threat == was.Threat && now.Source == was.Source {
 			continue
 		}
-		changes = append(changes, store.IPThreat{IP: ip, Threat: now})
-		if now != "" {
-			flagged = append(flagged, store.IPThreat{IP: ip, Threat: now})
+		changes = append(changes, now)
+		// Chỉ báo động khi *dải* đổi. Sau migration thêm cột nguồn, mọi địa chỉ đang bị
+		// đánh dấu đều có nguồn rỗng và sẽ được điền ở lượt chạy này — điền lại xuất xứ
+		// cho một cảnh báo đã báo rồi không phải phát hiện mới, và phát lại tất cả sẽ
+		// dạy người vận hành bỏ qua chúng.
+		if now.Threat != "" && now.Threat != was.Threat {
+			flagged = append(flagged, now)
 		}
 	}
 
@@ -67,6 +73,7 @@ func (r *Runner) runIPThreat(ctx context.Context) error {
 		r.bus.Publish(KindThreatAlert, map[string]any{
 			"ip":     f.IP,
 			"threat": f.Threat,
+			"source": f.Source,
 		})
 	}
 	return nil

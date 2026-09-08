@@ -3,6 +3,7 @@ import { Link } from '@tanstack/react-router';
 
 import { useIPInvestigation, useThreats } from '@/api/hooks';
 import { Button, Card, EmptyState, ErrorState, Spinner, StatusBadge } from '@/components/ui/primitives';
+import { threatSourceLabel } from '@/lib/threat-source';
 
 /**
  * Màn điều tra theo địa chỉ IP.
@@ -140,7 +141,14 @@ function ThreatPanel({
                       {m.ip}
                     </button>
                   </td>
-                  <td className="py-1.5 pr-3 font-mono text-xs">{m.threat}</td>
+                  <td className="py-1.5 pr-3 text-xs">
+                    <span className="font-mono">{m.threat}</span>
+                    {m.source && (
+                      <span className="ml-2 text-slate-500 dark:text-slate-400">
+                        {threatSourceLabel(m.source)}
+                      </span>
+                    )}
+                  </td>
                   <td className="py-1.5 pr-3 text-xs">
                     {[m.country, m.org].filter(Boolean).join(' · ') || '—'}
                   </td>

@@ -19,6 +19,8 @@ type DomainIP struct {
 	Org       string `json:"org,omitempty"`
 	// Threat là dải trong danh sách hạ tầng độc hại đã khớp; rỗng nghĩa là sạch.
 	Threat string `json:"threat,omitempty"`
+	// ThreatSource là khóa danh sách đã khớp; rỗng khi Threat rỗng.
+	ThreatSource string `json:"threat_source,omitempty"`
 }
 
 // WriteResolutions ghi ánh xạ domain → IP lấy từ bản ghi trả lời DNS. Cài ingest.Sink.
@@ -99,7 +101,7 @@ func (s *Store) DomainIPs(ctx context.Context, domainID int64, limit int) ([]Dom
 	rows, err := s.r.QueryContext(ctx, `
 		SELECT ip, first_seen, last_seen, hits, ttl,
 		       coalesce(asn, 0), coalesce(country, ''), coalesce(org, ''),
-		       coalesce(threat, '')
+		       coalesce(threat, ''), coalesce(threat_source, '')
 		FROM domain_ips
 		WHERE domain_id = ?
 		ORDER BY last_seen DESC
@@ -113,7 +115,7 @@ func (s *Store) DomainIPs(ctx context.Context, domainID int64, limit int) ([]Dom
 	for rows.Next() {
 		var d DomainIP
 		if err := rows.Scan(&d.IP, &d.FirstSeen, &d.LastSeen, &d.Hits, &d.TTL,
-			&d.ASN, &d.Country, &d.Org, &d.Threat); err != nil {
+			&d.ASN, &d.Country, &d.Org, &d.Threat, &d.ThreatSource); err != nil {
 			return nil, fmt.Errorf("scan domain ip: %w", err)
 		}
 		out = append(out, d)
@@ -283,6 +285,8 @@ type IPThreat struct {
 	IP string
 	// Threat là dải đã khớp trong danh sách; rỗng nghĩa là sạch.
 	Threat string
+	// Source là khóa danh sách đã khớp; rỗng khi Threat rỗng.
+	Source string
 }
 
 // ThreatMatch là một dòng trong danh sách cảnh báo.
@@ -292,6 +296,10 @@ type ThreatMatch struct {
 	Status   string `json:"status"`
 	IP       string `json:"ip"`
 	Threat   string `json:"threat"`
+	// Source là khóa danh sách đã khớp, ví dụ "spamhaus_drop" hay "threatfox". Giao diện
+	// cần nó để nói đúng mức nghiêm trọng: dải rogue và máy chủ C2 đang sống không
+	// đòi cùng một phản ứng.
+	Source   string `json:"source"`
 	LastSeen string `json:"last_seen"`
 	Hits     int64  `json:"hits"`
 	Country  string `json:"country,omitempty"`
@@ -307,21 +315,29 @@ type ThreatMatch struct {
 // Đọc hết vào bộ nhớ để job đối chiếu tính phần chênh lệch rồi chỉ ghi những dòng
 // thật sự đổi. Số địa chỉ phân biệt của một mạng nhỏ hơn số dòng log nhiều bậc, nên
 // bản đồ này nhỏ.
-func (s *Store) IPThreatState(ctx context.Context) (map[string]string, error) {
+//
+// Trả về cả nguồn chứ không chỉ dải: một địa chỉ chuyển từ danh sách này sang danh
+// sách khác mà vẫn giữ nguyên dải là một thay đổi có thật, và người vận hành cần thấy.
+func (s *Store) IPThreatState(ctx context.Context) (map[string]IPThreat, error) {
+	// max(threat) là hàm gộp, còn threat_source là cột trần: SQLite bảo đảm cột trần
+	// lấy từ **đúng dòng** mà max() chọn. Viết max() cho cả hai cột sẽ gộp độc lập và
+	// có thể ghép dải của dòng này với nguồn của dòng kia — hai giá trị này là một cặp,
+	// không phải hai số liệu rời.
 	rows, err := s.r.QueryContext(ctx, `
-		SELECT ip, coalesce(max(threat), '') FROM domain_ips GROUP BY ip`)
+		SELECT ip, coalesce(max(threat), ''), coalesce(threat_source, '')
+		FROM domain_ips GROUP BY ip`)
 	if err != nil {
 		return nil, fmt.Errorf("read ip threat state: %w", err)
 	}
 	defer rows.Close()
 
-	out := make(map[string]string, 1024)
+	out := make(map[string]IPThreat, 1024)
 	for rows.Next() {
-		var ip, threat string
-		if err := rows.Scan(&ip, &threat); err != nil {
+		var t IPThreat
+		if err := rows.Scan(&t.IP, &t.Threat, &t.Source); err != nil {
 			return nil, fmt.Errorf("scan ip threat state: %w", err)
 		}
-		out[ip] = threat
+		out[t.IP] = t
 	}
 	return out, rows.Err()
 }
@@ -338,7 +354,8 @@ func (s *Store) SetIPThreats(ctx context.Context, threats []IPThreat) (int64, er
 	}
 	defer tx.Rollback()
 
-	stmt, err := tx.PrepareContext(ctx, `UPDATE domain_ips SET threat = ? WHERE ip = ?`)
+	stmt, err := tx.PrepareContext(ctx,
+		`UPDATE domain_ips SET threat = ?, threat_source = ? WHERE ip = ?`)
 	if err != nil {
 		return 0, fmt.Errorf("prepare set ip threat: %w", err)
 	}
@@ -347,12 +364,16 @@ func (s *Store) SetIPThreats(ctx context.Context, threats []IPThreat) (int64, er
 	var updated int64
 	for _, t := range threats {
 		// Ghi NULL thay vì chuỗi rỗng khi sạch, để index bộ phận chỉ chứa dòng có
-		// cảnh báo thật.
-		var value any
-		if t.Threat != "" {
-			value = t.Threat
+		// cảnh báo thật. Hai cột luôn được ghi cùng nhau: một dòng có dải mà không có
+		// nguồn, hoặc ngược lại, là trạng thái không giải thích được cho người đọc.
+		// Hai cột đi cùng nhau hoặc cùng NULL. Một dòng có dải mà không có nguồn là
+		// trạng thái không giải thích được cho người đọc hồ sơ điều tra, nên coi nguồn
+		// rỗng là "chưa đối chiếu" chứ không ghi chuỗi rỗng vào cột.
+		var value, source any
+		if t.Threat != "" && t.Source != "" {
+			value, source = t.Threat, t.Source
 		}
-		res, err := stmt.ExecContext(ctx, value, t.IP)
+		res, err := stmt.ExecContext(ctx, value, source, t.IP)
 		if err != nil {
 			return 0, fmt.Errorf("set threat cho %s: %w", t.IP, err)
 		}
@@ -374,7 +395,8 @@ func (s *Store) SetIPThreats(ctx context.Context, threats []IPThreat) (int64, er
 // thuộc về bộ luật phân loại và người vận hành sửa được.
 func (s *Store) ThreatMatches(ctx context.Context, beaconMaxCV float64, limit int) ([]ThreatMatch, error) {
 	rows, err := s.r.QueryContext(ctx, `
-		SELECT d.id, d.name, d.status, i.ip, i.threat, i.last_seen, i.hits,
+		SELECT d.id, d.name, d.status, i.ip, i.threat,
+		       coalesce(i.threat_source, ''), i.last_seen, i.hits,
 		       coalesce(i.country, ''), coalesce(i.org, ''),
 		       coalesce(b.interval_cv, 0) > 0 AND coalesce(b.interval_cv, 0) < ?
 		FROM domain_ips i
@@ -392,7 +414,7 @@ func (s *Store) ThreatMatches(ctx context.Context, beaconMaxCV float64, limit in
 	for rows.Next() {
 		var m ThreatMatch
 		if err := rows.Scan(&m.DomainID, &m.Name, &m.Status, &m.IP, &m.Threat,
-			&m.LastSeen, &m.Hits, &m.Country, &m.Org, &m.Beacon); err != nil {
+			&m.Source, &m.LastSeen, &m.Hits, &m.Country, &m.Org, &m.Beacon); err != nil {
 			return nil, fmt.Errorf("scan threat match: %w", err)
 		}
 		out = append(out, m)
@@ -420,6 +442,9 @@ type ExportResolution struct {
 	Country   string `json:"country,omitempty"`
 	Org       string `json:"org,omitempty"`
 	Threat    string `json:"threat,omitempty"`
+	// ThreatSource cho người điều tra biết *danh sách nào* đã đánh dấu địa chỉ. Một
+	// hồ sơ chỉ nói "khớp 45.66.0.0/16" thì không kiểm chứng lại được.
+	ThreatSource string `json:"threat_source,omitempty"`
 }
 
 // ExportQueries duyệt các truy vấn trong khoảng thời gian, cũ nhất trước.
@@ -461,7 +486,7 @@ func (s *Store) ExportResolutions(ctx context.Context, from, to string, fn func(
 	rows, err := s.r.QueryContext(ctx, `
 		SELECT d.name, i.ip, i.first_seen, i.last_seen, i.hits, i.ttl,
 		       coalesce(i.asn, 0), coalesce(i.country, ''), coalesce(i.org, ''),
-		       coalesce(i.threat, '')
+		       coalesce(i.threat, ''), coalesce(i.threat_source, '')
 		FROM domain_ips i
 		JOIN domains d ON d.id = i.domain_id
 		WHERE i.last_seen >= ? AND i.first_seen <= ?
@@ -474,7 +499,7 @@ func (s *Store) ExportResolutions(ctx context.Context, from, to string, fn func(
 	for rows.Next() {
 		var r ExportResolution
 		if err := rows.Scan(&r.Domain, &r.IP, &r.FirstSeen, &r.LastSeen, &r.Hits, &r.TTL,
-			&r.ASN, &r.Country, &r.Org, &r.Threat); err != nil {
+			&r.ASN, &r.Country, &r.Org, &r.Threat, &r.ThreatSource); err != nil {
 			return fmt.Errorf("scan export resolution: %w", err)
 		}
 		if err := fn(r); err != nil {

@@ -475,14 +475,15 @@ function PublishSection({ publish }: { publish: PublishSettings }) {
   );
 }
 
-/** Hai bảng tra cứu cục bộ nuôi hai tín hiệu chấm điểm. */
+/** Các bảng tra cứu cục bộ: nuôi tín hiệu chấm điểm và đối chiếu địa chỉ. */
 function LookupSection({ tables }: { tables: LookupTable[] }) {
   return (
     <Card title="Dữ liệu tra cứu">
       <p className="mb-3 text-sm text-slate-600 dark:text-slate-300">
-        Hai bảng dữ liệu công khai, tải một lần rồi dùng offline. Chúng{' '}
+        Dữ liệu công khai, tải về rồi dùng offline. Chúng{' '}
         <strong className="font-semibold">không liên quan</strong> tới màn Nguồn ngoài: nguồn ngoài
-        là danh sách tên miền để đối chiếu, còn đây là bảng tra thông tin về hạ tầng.
+        là danh sách tên miền để đối chiếu, còn đây là bảng tra thông tin về hạ tầng và danh sách
+        địa chỉ độc hại.
       </p>
 
       <div className="grid gap-3 lg:grid-cols-2">

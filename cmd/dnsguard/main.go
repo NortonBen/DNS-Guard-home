@@ -92,7 +92,7 @@ func run() error {
 		runner.SetHistoryPruner(aiDB)
 	}
 	threats := buildThreatSet(cfg, log)
-	runner.SetThreatSet(threats)
+	runner.SetThreats(threats)
 	listener := ingest.NewListener(ingest.Options{Addr: cfg.TZSPListen}, db, log)
 
 	// Bộ ghi pcap là tuỳ chọn và mặc định tắt. Khi bật, nó nhận bản sao mọi khung
@@ -248,22 +248,30 @@ func registerAI(ctx context.Context, db *store.Store, aiDB *ai.Store, cfg config
 //
 // Giới hạn tốc độ đặt riêng từng nguồn vì chúng khác nhau rất xa: phân giải DNS chịu
 // được hàng chục truy vấn mỗi giây, còn crt.sh sẽ chặn nếu vượt vài truy vấn mỗi phút.
-// buildThreatSet nạp danh sách hạ tầng độc hại từ đĩa.
+// buildThreatSet nạp mọi danh sách hạ tầng độc hại từ đĩa.
 //
-// Không nằm trong buildEnrichers vì nó không phải nguồn làm giàu: nó tra theo địa chỉ
-// chứ không theo tên miền, và không đóng góp tín hiệu nào vào điểm phân loại.
-func buildThreatSet(cfg config.Config, log *slog.Logger) *threat.Set {
-	set := threat.New()
-	if err := set.LoadTable(cfg.IPThreatPath); err != nil {
-		// Thiếu danh sách chỉ làm mất cảnh báo, không làm hỏng gì khác. Job đối chiếu
-		// tự bỏ qua và nói lý do trong nhật ký.
-		log.Warn("không nạp được danh sách hạ tầng độc hại, cảnh báo IP sẽ không hoạt động",
-			"path", cfg.IPThreatPath, "err", err)
-	} else {
+// Không nằm trong buildEnrichers vì chúng không phải nguồn làm giàu: chúng tra theo
+// địa chỉ chứ không theo tên miền, và không đóng góp tín hiệu nào vào điểm phân loại.
+func buildThreatSet(cfg config.Config, log *slog.Logger) *threat.Registry {
+	// Thứ tự có nghĩa: Spamhaus DROP trước vì nó nói về *dải* hạ tầng bị chiếm đoạt —
+	// bằng chứng bền hơn và ít báo nhầm hơn một địa chỉ C2 có thể đã bị thu hồi.
+	reg := threat.NewRegistry(
+		threat.SpamhausDROP(cfg.DROPPath),
+		threat.ThreatFox(cfg.ThreatFoxPath),
+	)
+
+	for _, src := range reg.Sources() {
+		if err := src.LoadTable(src.Dest()); err != nil {
+			// Thiếu một danh sách chỉ làm mất cảnh báo của riêng nó, không làm hỏng gì
+			// khác. Job đối chiếu vẫn chạy với những nguồn nạp được.
+			log.Warn("không nạp được danh sách hạ tầng độc hại",
+				"nguồn", src.Name(), "path", src.Dest(), "err", err)
+			continue
+		}
 		log.Info("đã nạp danh sách hạ tầng độc hại",
-			"path", cfg.IPThreatPath, "entries", set.Status().Entries)
+			"nguồn", src.Name(), "path", src.Dest(), "entries", src.Status().Entries)
 	}
-	return set
+	return reg
 }
 
 func buildEnrichers(cfg config.Config, log *slog.Logger) *enrich.Registry {

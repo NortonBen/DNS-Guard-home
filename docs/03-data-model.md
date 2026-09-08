@@ -332,9 +332,22 @@ CREATE TABLE domain_ips (
   asn        INTEGER,
   country    TEXT,
   org        TEXT,
+  -- Kết quả đối chiếu với các danh sách hạ tầng độc hại. NULL = không nằm trong
+  -- danh sách nào. Hai cột luôn được ghi cùng nhau.
+  threat        TEXT,  -- dải đã khớp, ví dụ "45.66.0.0/16"
+  threat_source TEXT,  -- khóa danh sách đã khớp: "spamhaus_drop" | "threatfox"
   PRIMARY KEY (domain_id, ip)
 ) WITHOUT ROWID;
 ```
+
+**Vì sao lưu cả nguồn, không chỉ dải.** Hệ thống đối chiếu với nhiều danh sách cùng
+lúc, và mỗi danh sách đòi một mức phản ứng khác nhau: khớp một dải của Spamhaus DROP
+nghĩa là địa chỉ nằm trong khối bị tổ chức tội phạm thuê hoặc chiếm đoạt, còn khớp
+ThreatFox nghĩa là có máy trong mạng đang nói chuyện với máy chủ điều khiển mã độc.
+Chỉ nhìn dải thì không phân biệt được hai việc đó.
+
+Job `ip_threat` quét lại toàn bộ mỗi giờ, nên hai cột này tự đầy sau khi thêm một
+nguồn mới — không cần backfill, và cảnh báo tự tắt khi địa chỉ được gỡ khỏi danh sách.
 
 **Khác `domain_facts` nguồn `asn` ở chỗ nào.** Ở đó là kết quả DNSGuard tự phân giải
 lúc làm giàu — một tra cứu khác, từ một máy khác, vào một lúc khác. Bảng này là câu

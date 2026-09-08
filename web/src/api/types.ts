@@ -85,6 +85,8 @@ export interface DomainIP {
   org?: string;
   /** Dải trong danh sách hạ tầng độc hại đã khớp. Vắng mặt nghĩa là sạch. */
   threat?: string;
+  /** Khóa danh sách đã khớp. Vắng mặt khi threat vắng mặt. */
+  threat_source?: string;
 }
 
 export interface DomainDetail {
@@ -107,6 +109,8 @@ export interface ThreatMatch {
   status: DomainStatus;
   ip: string;
   threat: string;
+  /** Khóa danh sách đã khớp — dải rogue và máy chủ C2 đòi hai mức phản ứng khác nhau. */
+  source: string;
   last_seen: string;
   hits: number;
   country?: string;
@@ -358,7 +362,12 @@ export interface ApiErrorBody {
 }
 
 export interface LookupTable {
-  kind: 'asn' | 'rank';
+  /**
+   * Khóa bảng tra cứu, ví dụ 'asn', 'rank', 'spamhaus_drop', 'threatfox'. Để mở chứ không
+   * đóng thành union: các nguồn hạ tầng độc hại thay đổi theo thời gian (nguồn chết,
+   * nguồn mới thay vào), và giao diện vẽ chúng theo dữ liệu chứ không theo tên.
+   */
+  kind: string;
   label: string;
   describes: string;
   loaded: boolean;

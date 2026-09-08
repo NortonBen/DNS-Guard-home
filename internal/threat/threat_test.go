@@ -9,16 +9,20 @@ import (
 
 func writeList(t *testing.T, body string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "ipthreat.txt")
+	path := filepath.Join(t.TempDir(), "spamhaus-drop.txt")
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("ghi file danh sách: %v", err)
 	}
 	return path
 }
 
+// testSet dựng nguồn dạng danh sách IP thật, để test đi qua đúng định nghĩa mà sản
+// phẩm dùng thay vì một định nghĩa bịa riêng cho test.
+func testSet() *Set { return SpamhausDROP("") }
+
 func loadSet(t *testing.T, body string) *Set {
 	t.Helper()
-	s := New()
+	s := testSet()
 	if err := s.LoadTable(writeList(t, body)); err != nil {
 		t.Fatalf("LoadTable: %v", err)
 	}
@@ -99,7 +103,7 @@ func TestLoadTableNormalisesUnmaskedPrefix(t *testing.T) {
 // Tải về được một trang lỗi HTML là chuyện thường. Nạp nó phải hỏng chứ không được
 // thay bảng đang dùng bằng danh sách rỗng.
 func TestLoadTableRejectsEmptyList(t *testing.T) {
-	s := New()
+	s := testSet()
 	err := s.LoadTable(writeList(t, "<html><body>404 Not Found</body></html>\n"))
 	if err == nil {
 		t.Fatal("nạp trang HTML lại thành công")
@@ -111,7 +115,7 @@ func TestLoadTableRejectsEmptyList(t *testing.T) {
 
 // Chưa nạp thì không khớp gì, và không được sập.
 func TestLookupOnEmptySet(t *testing.T) {
-	if _, ok := New().Lookup(netip.MustParseAddr("1.2.3.4")); ok {
+	if _, ok := testSet().Lookup(netip.MustParseAddr("1.2.3.4")); ok {
 		t.Error("Set rỗng lại khớp")
 	}
 }
@@ -122,7 +126,7 @@ func TestStatusReportsEntries(t *testing.T) {
 	if !st.Loaded || st.Entries != 2 {
 		t.Errorf("trạng thái = loaded %v, %d mục; muốn true, 2", st.Loaded, st.Entries)
 	}
-	if st.Kind != "ipthreat" || st.DefaultURL == "" {
+	if st.Kind != "spamhaus_drop" || st.DefaultURL == "" {
 		t.Errorf("trạng thái thiếu kind hoặc URL mặc định: %+v", st)
 	}
 }

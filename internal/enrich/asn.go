@@ -102,6 +102,13 @@ func (e *ASNEnricher) LoadTable(path string) error {
 		return fmt.Errorf("đọc bảng ip2asn: %w", err)
 	}
 
+	// Không nhận bảng rỗng. Một URL trả về trang lỗi HTML tải xuống thành công và
+	// phân tích ra 0 dải; báo lỗi ở đây giữ cho bảng đang dùng còn nguyên, thay vì
+	// để RefreshTable ghi đè bảng tốt bằng trang lỗi đó.
+	if len(v4)+len(v6) == 0 {
+		return fmt.Errorf("bảng ip2asn %q không có dải nào đọc được", path)
+	}
+
 	// Sắp xếp một lần để tra cứu dùng tìm kiếm nhị phân thay vì quét tuyến tính.
 	cmp := func(a, b asnRange) int { return a.start.Compare(b.start) }
 	slices.SortFunc(v4, cmp)

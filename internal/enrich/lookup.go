@@ -15,7 +15,10 @@ import (
 	"time"
 )
 
-// Nguồn tải mặc định cho hai bảng tra cứu cục bộ.
+// Nguồn tải mặc định cho hai bảng làm giàu cục bộ.
+//
+// Các danh sách hạ tầng độc hại khai URL mặc định của riêng chúng ở package threat:
+// chúng thay đổi thường xuyên hơn hai bảng này, và mỗi nguồn mang lý do chọn riêng.
 //
 // Cả hai đều là dữ liệu công khai, tải một lần rồi dùng offline. Đặt URL ở đây thay
 // vì bắt người dùng tự tìm: đây là loại việc mà một cài đặt mới nào cũng phải làm,
@@ -23,11 +26,6 @@ import (
 const (
 	DefaultASNURL    = "https://iptoasn.com/data/ip2asn-combined.tsv.gz"
 	DefaultTrancoURL = "https://tranco-list.eu/top-1m.csv.zip"
-	// Danh sách máy chủ điều khiển botnet của abuse.ch. Chọn nguồn này làm mặc định
-	// vì nó liệt kê hạ tầng *chuyên dụng* của kẻ tấn công, không phải dải dùng chung:
-	// một địa chỉ trong đó hiếm khi còn phục vụ thứ gì hợp pháp, nên tỉ lệ báo nhầm
-	// thấp hơn hẳn các danh sách chặn theo danh tiếng.
-	DefaultIPThreatURL = "https://feodotracker.abuse.ch/downloads/ipblocklist.txt"
 )
 
 // maxTableSize chặn trên kích thước tải về. Bảng ASN khoảng 10 MB nén, Tranco khoảng
@@ -117,7 +115,15 @@ func RefreshTable(ctx context.Context, target Table, url, dest string) (int64, e
 		return 0, fmt.Errorf("tải về được nhưng không đọc được nội dung: %w", err)
 	}
 	if err := os.Rename(tmpName, dest); err != nil {
-		return 0, fmt.Errorf("đổi tên %q → %q: %w", tmpName, dest, err)
+		// Nạp thử ở trên đã thay dữ liệu trong bộ nhớ rồi, còn file cũ thì vẫn nguyên
+		// vì rename hỏng. Không khôi phục thì tiến trình chạy tiếp với bảng trỏ vào một
+		// file tạm mà defer bên trên sắp xoá. Hết dung lượng đĩa là cách dễ nhất để rơi
+		// vào nhánh này.
+		restore := ""
+		if rerr := target.LoadTable(dest); rerr != nil {
+			restore = fmt.Sprintf("; nạp lại bảng cũ cũng hỏng: %v", rerr)
+		}
+		return 0, fmt.Errorf("đổi tên %q → %q: %w%s", tmpName, dest, err, restore)
 	}
 	// Nạp lại từ đường dẫn cuối để Status báo đúng file đang dùng.
 	if err := target.LoadTable(dest); err != nil {

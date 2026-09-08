@@ -1,13 +1,12 @@
 package enrich
 
 import (
-	"archive/zip"
 	"bufio"
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,7 +45,7 @@ func (e *RankEnricher) Name() string { return "rank" }
 // LoadTable nạp danh sách Tranco từ file CSV hoặc ZIP chứa CSV.
 // Định dạng mỗi dòng: rank,domain
 func (e *RankEnricher) LoadTable(path string) error {
-	reader, closer, err := openRankFile(path)
+	reader, closer, err := OpenMaybeZip(path, ".csv")
 	if err != nil {
 		return err
 	}
@@ -75,11 +74,40 @@ func (e *RankEnricher) LoadTable(path string) error {
 		ranks[strings.ToLower(strings.TrimSpace(record[1]))] = rank
 	}
 
+	// Không nhận bảng rỗng, và không nhận bảng thiếu những tên miền mà mọi bảng xếp
+	// hạng đều phải có. Một URL trả về trang lỗi hoặc một file đúng kiểu CSV nhưng
+	// sai thứ tự cột đều nạp "thành công" ra bảng vô dụng — và vì high_rank là tín
+	// hiệu bảo vệ mạnh nhất, hỏng ở đây nghĩa là mất lớp chống chặn nhầm mà không có
+	// dấu hiệu nào. Rẻ hơn nhiều so với việc phát hiện qua một domain bị chặn oan.
+	if err := checkRanks(ranks); err != nil {
+		return err
+	}
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.ranks, e.loaded = ranks, true
 	e.path, e.loadedAt = path, time.Now().UTC()
 	return nil
+}
+
+// rankSentinels là các tên miền phải có mặt trong bất kỳ bảng xếp hạng phổ biến nào.
+//
+// Chọn tên miền hạ tầng toàn cầu, không phải tên miền theo vùng hay theo thị hiếu:
+// mọi bảng xếp hạng dựng bằng mọi phương pháp đều xếp chúng rất cao.
+var rankSentinels = []string{"google.com", "microsoft.com", "amazonaws.com"}
+
+// checkRanks từ chối bảng rỗng hoặc bảng không chứa tên miền chuẩn nào.
+func checkRanks(ranks map[string]int) error {
+	if len(ranks) == 0 {
+		return errors.New("bảng xếp hạng không có mục nào đọc được")
+	}
+	for _, d := range rankSentinels {
+		if ranks[d] > 0 {
+			return nil
+		}
+	}
+	return fmt.Errorf("bảng xếp hạng đọc ra %d mục nhưng không có tên miền chuẩn nào (%s) — "+
+		"nhiều khả năng sai định dạng hoặc sai thứ tự cột", len(ranks), strings.Join(rankSentinels, ", "))
 }
 
 // Status mô tả trạng thái bảng cho giao diện cài đặt.
@@ -96,34 +124,6 @@ func (e *RankEnricher) Status() TableStatus {
 		st.LoadedAt = e.loadedAt.Format(time.RFC3339)
 	}
 	return st
-}
-
-func openRankFile(path string) (io.Reader, func(), error) {
-	if strings.HasSuffix(path, ".zip") {
-		zr, err := zip.OpenReader(path)
-		if err != nil {
-			return nil, nil, fmt.Errorf("mở %q: %w", path, err)
-		}
-		for _, f := range zr.File {
-			if !strings.HasSuffix(f.Name, ".csv") {
-				continue
-			}
-			rc, err := f.Open()
-			if err != nil {
-				zr.Close()
-				return nil, nil, fmt.Errorf("mở %q trong zip: %w", f.Name, err)
-			}
-			return rc, func() { rc.Close(); zr.Close() }, nil
-		}
-		zr.Close()
-		return nil, nil, fmt.Errorf("không tìm thấy file .csv trong %q", path)
-	}
-
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, nil, fmt.Errorf("mở %q: %w", path, err)
-	}
-	return f, func() { f.Close() }, nil
 }
 
 // Loaded cho biết bảng đã nạp chưa.

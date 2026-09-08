@@ -1,8 +1,13 @@
-// Package threat đối chiếu địa chỉ IP với danh sách hạ tầng độc hại tải về được.
+// Package threat đối chiếu địa chỉ IP với các danh sách hạ tầng độc hại tải về được.
 //
 // Tra cứu bằng bảng cục bộ chứ không gọi API, cùng lý do như bảng ASN: việc này chạy
 // cho mọi địa chỉ mà mạng phân giải tới, và một dịch vụ ngoài ở đó vừa chậm vừa lộ
 // toàn bộ hoạt động của mạng ra bên thứ ba.
+//
+// Nhiều nguồn chứ không một, vì "hạ tầng độc hại" không phải một khái niệm đồng nhất:
+// một dải bị chiếm đoạt và một máy chủ C2 đang sống đòi hai mức phản ứng khác nhau.
+// Mỗi nguồn tải, nạp và hiện trạng thái riêng, nên người vận hành thấy ngay nguồn nào
+// đang mục — đúng loại hỏng hóc mà nguồn mặc định cũ mắc phải suốt sáu tháng.
 package threat
 
 import (
@@ -10,13 +15,15 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/benji/dnsguard/internal/enrich"
 )
+
+// timeLayout là định dạng dấu thời gian báo ra API.
+const timeLayout = time.RFC3339
 
 // Giới hạn độ rộng của một dải được phép nạp.
 //
@@ -31,17 +38,24 @@ const (
 	minPrefixV6 = 19
 )
 
-// Match là kết quả khớp một địa chỉ với danh sách.
+// Match là kết quả khớp một địa chỉ với một danh sách.
 type Match struct {
 	// Prefix là dải đã khớp, ví dụ "1.2.3.4/32" hoặc "45.66.0.0/16".
 	Prefix string
+	// Source là khóa nguồn đã khớp, ví dụ "spamhaus_drop" hoặc "threatfox".
+	//
+	// Khóa tự mô tả chứ không phải mã nội bộ: nó được ghi xuống CSDL và xuất ra hồ sơ
+	// điều tra, nơi người đọc phải hiểu được xuất xứ mà không cần tra bảng ánh xạ.
+	Source string
 }
 
-// Set là danh sách hạ tầng độc hại đã nạp vào bộ nhớ.
+// Set là một danh sách hạ tầng độc hại đã nạp vào bộ nhớ.
 //
 // Cài enrich.Table nên dùng lại được cơ chế tải về nguyên tử ở package enrich, dù
 // bản thân nó không phải nguồn làm giàu: nó tra theo địa chỉ, không theo tên miền.
 type Set struct {
+	def Definition
+
 	mu       sync.RWMutex
 	prefixes map[netip.Prefix]struct{}
 	loaded   bool
@@ -49,55 +63,44 @@ type Set struct {
 	loadedAt time.Time
 }
 
-// New dựng một Set rỗng. Chưa nạp gì cho tới khi gọi LoadTable.
-func New() *Set { return &Set{} }
+// New dựng một Set rỗng theo định nghĩa nguồn. Chưa nạp gì cho tới khi gọi LoadTable.
+func New(def Definition) *Set { return &Set{def: def} }
 
 // Name là khóa dùng ở API cập nhật bảng tra cứu.
-func (s *Set) Name() string { return "ipthreat" }
+func (s *Set) Name() string { return s.def.Kind }
 
-// Loaded cho biết bảng đã nạp chưa.
+// Dest là nơi lưu file tải về của nguồn này.
+func (s *Set) Dest() string { return s.def.Dest }
+
+// Loaded cho biết danh sách đã nạp chưa.
 func (s *Set) Loaded() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.loaded
 }
 
-// Status mô tả trạng thái bảng, cho màn Cài đặt.
-func (s *Set) Status() enrich.TableStatus {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	st := enrich.TableStatus{
-		Kind: "ipthreat", Label: "Danh sách hạ tầng độc hại", Loaded: s.loaded,
-		Entries: len(s.prefixes), Path: s.path,
-		DefaultURL: enrich.DefaultIPThreatURL,
-		Describes: "Dải địa chỉ của máy chủ điều khiển mã độc. Thiếu nó thì cảnh báo " +
-			"phân giải tới hạ tầng độc hại không hoạt động.",
-	}
-	if !s.loadedAt.IsZero() {
-		st.LoadedAt = s.loadedAt.Format(time.RFC3339)
-	}
-	return st
-}
-
-// LoadTable đọc danh sách từ một file văn bản.
-//
-// Chấp nhận cả địa chỉ trần lẫn ký hiệu CIDR, mỗi dòng một mục, vì hai định dạng phổ
-// biến nhất chia nhau hai kiểu đó: abuse.ch liệt kê địa chỉ đơn, còn Spamhaus DROP
-// liệt kê dải. Chú thích bắt đầu bằng "#" hoặc ";" — cũng là hai kiểu của hai nguồn.
+// LoadTable đọc danh sách từ file, theo định dạng đã khai báo ở định nghĩa nguồn.
 func (s *Set) LoadTable(path string) error {
-	f, err := os.Open(path)
+	parse, inner := parseIPListLine, ".txt"
+	if s.def.Format == FormatThreatFoxCSV {
+		parse, inner = parseThreatFoxLine, ".csv"
+	}
+
+	// Bản đầy đủ của ThreatFox phát hành dạng ZIP một-file; mọi nguồn khác là văn bản
+	// trần. OpenMaybeZip nhận cả hai nên định dạng đóng gói không phải mối bận tâm của
+	// hàm này.
+	f, closer, err := enrich.OpenMaybeZip(path, inner)
 	if err != nil {
 		return fmt.Errorf("mở danh sách %q: %w", path, err)
 	}
-	defer f.Close()
+	defer closer()
 
 	prefixes := make(map[netip.Prefix]struct{}, 4096)
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
 
 	for sc.Scan() {
-		if p, ok := parsePrefix(sc.Text()); ok {
+		if p, ok := parse(sc.Text()); ok {
 			prefixes[p] = struct{}{}
 		}
 	}
@@ -106,7 +109,7 @@ func (s *Set) LoadTable(path string) error {
 	}
 
 	// Không nạp danh sách rỗng. Một URL trả về trang lỗi HTML sẽ tải xuống thành công
-	// và phân tích ra 0 mục; báo lỗi ở đây giữ cho bảng đang dùng còn nguyên.
+	// và phân tích ra 0 mục; báo lỗi ở đây giữ cho danh sách đang dùng còn nguyên.
 	if len(prefixes) == 0 {
 		return errors.New("danh sách không có mục nào đọc được")
 	}
@@ -149,19 +152,30 @@ func (s *Set) Lookup(ip netip.Addr) (Match, bool) {
 			return Match{}, false
 		}
 		if _, hit := s.prefixes[p]; hit {
-			return Match{Prefix: p.String()}, true
+			return Match{Prefix: p.String(), Source: s.def.Kind}, true
 		}
 	}
 	return Match{}, false
 }
 
-// parsePrefix đọc một dòng thành dải địa chỉ. Trả về false cho dòng trống, dòng chú
-// thích, dòng không đọc được, và dải rộng quá mức cho phép.
-func parsePrefix(line string) (netip.Prefix, bool) {
+// parseIPListLine đọc một dòng của danh sách mỗi dòng một mục.
+//
+// Chấp nhận cả địa chỉ trần lẫn ký hiệu CIDR vì hai định dạng phổ biến nhất chia nhau
+// hai kiểu đó: abuse.ch liệt kê địa chỉ đơn, còn Spamhaus DROP liệt kê dải. Chú thích
+// bắt đầu bằng "#" hoặc ";" — cũng là hai kiểu của hai nguồn.
+//
+// Trả về false cho dòng trống, dòng chú thích, dòng không đọc được, và dải rộng quá
+// mức cho phép.
+func parseIPListLine(line string) (netip.Prefix, bool) {
 	if i := strings.IndexAny(line, "#;"); i >= 0 {
 		line = line[:i]
 	}
 	field, _, _ := strings.Cut(strings.TrimSpace(line), " ")
+	return parseField(field)
+}
+
+// parseField chuẩn hoá một chuỗi địa chỉ hoặc dải thành Prefix đã che đúng độ dài.
+func parseField(field string) (netip.Prefix, bool) {
 	if field == "" {
 		return netip.Prefix{}, false
 	}

@@ -284,7 +284,8 @@ là RFC3339 và bắt buộc; khoảng tối đa **400 ngày**.
 
 ```
 queries.ndjson       mỗi dòng: {client, domain, qtype, at}
-resolutions.ndjson   mỗi dòng: {domain, ip, first_seen, last_seen, hits, ttl, asn, country, org, threat}
+resolutions.ndjson   mỗi dòng: {domain, ip, first_seen, last_seen, hits, ttl, asn, country, org,
+                                 threat, threat_source}
 manifest.json        siêu dữ liệu vụ việc + sha256 của từng file
 ```
 

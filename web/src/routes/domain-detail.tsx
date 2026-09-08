@@ -24,6 +24,7 @@ import {
   StatusBadge,
 } from '@/components/ui/primitives';
 import { formatDateTime, formatNumber, formatRelative, formatScore } from '@/lib/format';
+import { threatSourceLabel } from '@/lib/threat-source';
 import type { DomainIP } from '@/api/types';
 
 // Đồ thị chỉ nạp khi mở trang chi tiết, không nằm trong bundle chung.
@@ -407,7 +408,9 @@ function ObservedIPs({ ips }: { ips: DomainIP[] }) {
                 {ip.threat && (
                   <span
                     className="ml-2 rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-800 dark:bg-red-900 dark:text-red-200"
-                    title={`Khớp dải ${ip.threat} trong danh sách hạ tầng độc hại`}
+                    title={`Khớp dải ${ip.threat}${
+                      ip.threat_source ? ` trong ${threatSourceLabel(ip.threat_source)}` : ''
+                    }`}
                   >
                     độc hại
                   </span>

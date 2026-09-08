@@ -28,7 +28,7 @@ func (s *Server) handleListThreats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	loaded := s.threats != nil && s.threats.Loaded()
+	loaded := s.threats.Loaded()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"matches": orEmpty(matches),
 		// Danh sách rỗng có hai nguyên nhân trái ngược nhau: không có gì đáng báo,

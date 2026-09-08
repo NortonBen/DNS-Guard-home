@@ -65,7 +65,7 @@ type Runner struct {
 
 	// threats là danh sách hạ tầng độc hại. Có thể nil: bảng là tuỳ chọn, và người
 	// vận hành phải tự tải nó về trước khi cảnh báo hoạt động.
-	threats *threat.Set
+	threats *threat.Registry
 }
 
 // SetHistoryPruner gắn nhật ký AI vào job dọn dẹp.
@@ -74,11 +74,11 @@ type Runner struct {
 // tham số nil vào mọi lời gọi New chỉ để nói "không có AI" là cái giá sai.
 func (r *Runner) SetHistoryPruner(p HistoryPruner) { r.aiHistory = p }
 
-// SetThreatSet gắn danh sách hạ tầng độc hại vào job đối chiếu.
+// SetThreats gắn sổ đăng ký danh sách hạ tầng độc hại vào job đối chiếu.
 //
 // Đặt sau khi dựng, cùng lý do như SetHistoryPruner: bảng là tuỳ chọn, và thêm một
 // tham số nil vào mọi lời gọi New chỉ để nói "chưa tải danh sách" là cái giá sai.
-func (r *Runner) SetThreatSet(s *threat.Set) { r.threats = s }
+func (r *Runner) SetThreats(reg *threat.Registry) { r.threats = reg }
 
 // New dựng Runner.
 func New(s *store.Store, cfg config.Config, enrichers *enrich.Registry,
@@ -520,14 +520,18 @@ func (r *Runner) loadRules(ctx context.Context) (classify.Rules, error) {
 }
 
 // LookupPath trả về nơi lưu bảng tra cứu của một nguồn.
+//
+// Các nguồn đe dọa tự khai đường dẫn của mình, nên thêm một nguồn không phải sửa hàm
+// này. Chỉ hai bảng làm giàu còn nằm trong switch, vì chúng là duy nhất theo thiết kế.
 func (r *Runner) LookupPath(kind string) string {
+	if src, ok := r.threats.Get(kind); ok {
+		return src.Dest()
+	}
 	switch kind {
 	case "asn":
 		return r.cfg.IP2ASNPath
 	case "rank":
 		return r.cfg.TrancoPath
-	case "ipthreat":
-		return r.cfg.IPThreatPath
 	default:
 		return ""
 	}
@@ -535,14 +539,11 @@ func (r *Runner) LookupPath(kind string) string {
 
 // lookupTable trả về bảng tra cứu cục bộ theo tên.
 //
-// Danh sách hạ tầng độc hại không nằm trong sổ đăng ký nguồn làm giàu vì nó tra theo
-// địa chỉ chứ không theo tên miền, nên phải tìm riêng ở đây.
+// Danh sách hạ tầng độc hại không nằm trong sổ đăng ký nguồn làm giàu vì chúng tra
+// theo địa chỉ chứ không theo tên miền, nên phải tìm riêng ở đây.
 func (r *Runner) lookupTable(kind string) (enrich.Table, bool) {
-	if kind == "ipthreat" {
-		if r.threats == nil {
-			return nil, false
-		}
-		return r.threats, true
+	if src, ok := r.threats.Get(kind); ok {
+		return src, true
 	}
 	t, ok := r.enrichers.Reloadables()[kind]
 	return t, ok
@@ -579,7 +580,7 @@ func (r *Runner) runRefreshLookup(ctx context.Context, job store.Job) error {
 	// Danh sách đe dọa không nuôi tín hiệu chấm điểm nào; thứ nó đổi là kết quả đối
 	// chiếu địa chỉ. Chạy đúng job đó thay vì chấm điểm lại toàn bộ.
 	next := JobClassify
-	if args.Kind == "ipthreat" {
+	if r.threats.Has(args.Kind) {
 		next = JobIPThreat
 	}
 	// Bảng mới có thể đổi điểm của nhiều domain — nhất là Tranco, vì nó nuôi tín hiệu
