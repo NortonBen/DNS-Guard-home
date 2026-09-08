@@ -54,6 +54,17 @@ func New(s *store.Store, dir string, minRatio float64, defaultSink string, log *
 	return &Publisher{store: s, dir: dir, minRatio: minRatio, defaultSink: defaultSink, log: log}
 }
 
+// Hai file tổng hợp, khác nhau ở đúng một điều và điều đó quan trọng.
+//
+// all.txt gộp các phân loại *đang bật xuất bản* — đây là danh sách dùng hằng ngày.
+// blocked.txt chứa *mọi* domain đang chặn, kể cả domain thuộc phân loại đã tắt hoặc
+// chưa có phân loại nào; nó tồn tại để một quyết định chặn không bao giờ rơi ra ngoài
+// mọi file mà người vận hành không hay biết.
+const (
+	AggregateFile = "all.txt"
+	BlockedFile   = "blocked.txt"
+)
+
 // DefaultSink là địa chỉ dùng khi không có cấu hình nào.
 //
 // 0.0.0.0 chứ không phải 127.0.0.1: địa chỉ này không định tuyến được nên kết nối
@@ -114,12 +125,19 @@ func (p *Publisher) PublishAll(ctx context.Context, only []string, actor string)
 	}
 
 	if len(wanted) == 0 {
-		r, err := p.publishOne(ctx, 0, "all", "all.txt", actor)
-		if err != nil {
-			if firstErr == nil {
-				firstErr = err
+		for _, agg := range []struct{ key, file string }{
+			{"all", AggregateFile},
+			{"blocked", BlockedFile},
+		} {
+			r, err := p.publishOne(ctx, 0, agg.key, agg.file, actor)
+			if err != nil {
+				p.log.Error("xuất bản danh sách tổng hợp thất bại",
+					"file", agg.file, "err", err)
+				if firstErr == nil {
+					firstErr = err
+				}
+				continue
 			}
-		} else {
 			results = append(results, r)
 		}
 	}
@@ -131,17 +149,32 @@ func (p *Publisher) PublishAll(ctx context.Context, only []string, actor string)
 func (p *Publisher) publishOne(ctx context.Context, categoryID int64,
 	categoryKey, fileName, actor string) (Result, error) {
 
-	domains, err := p.store.BlockedDomains(ctx, categoryID)
+	// Danh sách "mọi domain đang chặn" đi qua truy vấn riêng: nó cố tình bỏ qua cả
+	// điều kiện phân loại đang bật lẫn việc domain có phân loại hay không.
+	var domains []string
+	var err error
+	if categoryKey == "blocked" {
+		domains, err = p.store.AllBlockedDomains(ctx)
+	} else {
+		domains, err = p.store.BlockedDomains(ctx, categoryID)
+	}
 	if err != nil {
 		return Result{}, err
 	}
 
-	body := render(categoryKey, domains, p.SinkAddress(ctx))
-	sum := sha256.Sum256([]byte(body))
-	checksum := "sha256:" + hex.EncodeToString(sum[:])
+	sink := p.SinkAddress(ctx)
+	body := render(categoryKey, domains, sink)
+	checksum := contentChecksum(sink, domains)
 	path := filepath.Join(p.dir, fileName)
 
-	prev, err := p.store.LastSnapshot(ctx, categoryID)
+	// File tổng hợp phân biệt nhau bằng đường dẫn, vì cả hai đều lưu snapshot với
+	// category_id NULL.
+	var prev store.Snapshot
+	if categoryID > 0 {
+		prev, err = p.store.LastSnapshot(ctx, categoryID)
+	} else {
+		prev, err = p.store.LastAggregateSnapshot(ctx, fileName)
+	}
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		// Lần xuất bản đầu tiên: không có gì để so sánh, luôn cho phép.
@@ -212,9 +245,9 @@ func (p *Publisher) Rollback(ctx context.Context, snapshotID int64, actor string
 
 	// Dùng địa chỉ hiện hành chứ không phải địa chỉ lúc chụp snapshot: quay lại là
 	// quay lại tập domain, không phải quay lại cấu hình mạng.
-	body := render(target.CategoryKey, domains, p.SinkAddress(ctx))
-	sum := sha256.Sum256([]byte(body))
-	checksum := "sha256:" + hex.EncodeToString(sum[:])
+	sink := p.SinkAddress(ctx)
+	body := render(target.CategoryKey, domains, sink)
+	checksum := contentChecksum(sink, domains)
 
 	if err := writeAtomic(target.FilePath, body); err != nil {
 		return Result{}, err
@@ -234,7 +267,9 @@ func (p *Publisher) Rollback(ctx context.Context, snapshotID int64, actor string
 }
 
 func (p *Publisher) categoryIDOf(ctx context.Context, key string) (int64, error) {
-	if key == "" || key == "all" {
+	// Hai danh sách tổng hợp không thuộc phân loại nào; snapshot của chúng lưu với
+	// category_id NULL.
+	if key == "" || key == "all" || key == "blocked" {
 		return 0, nil
 	}
 	targets, err := p.store.PublishTargets(ctx)
@@ -247,6 +282,27 @@ func (p *Publisher) categoryIDOf(ctx context.Context, key string) (int64, error)
 		}
 	}
 	return 0, nil
+}
+
+// contentChecksum băm phần *nội dung* của một danh sách: địa chỉ đích cộng tập domain.
+//
+// Cố tình không băm cả file. Header có mốc thời gian sinh file, nên băm toàn bộ khiến
+// checksum đổi mỗi giây dù tập domain không hề đổi — và mọi thứ dựa trên checksum đều
+// hỏng theo: lần xuất bản nào cũng bị coi là "có thay đổi", lịch sử snapshot phình lên
+// bằng những bản giống hệt nhau, và ETag đổi liên tục nên router tải lại một danh sách
+// y nguyên sau mỗi lần chạy.
+//
+// Địa chỉ đích vẫn nằm trong phép băm vì nó là nội dung thật: đổi từ 0.0.0.0 sang
+// 127.0.0.1 phải kích hoạt ghi lại file.
+func contentChecksum(sink string, domains []string) string {
+	h := sha256.New()
+	h.Write([]byte(sink))
+	h.Write([]byte{0})
+	for _, d := range domains {
+		h.Write([]byte(d))
+		h.Write([]byte{0})
+	}
+	return "sha256:" + hex.EncodeToString(h.Sum(nil))
 }
 
 // render dựng nội dung file theo định dạng hosts.

@@ -12,6 +12,7 @@ import {
 import { AIVerdictCard } from '@/components/domain/ai-verdict';
 import { CnameChain } from '@/components/domain/cname-chain';
 import { DecisionHistory } from '@/components/domain/decision-history';
+import { QuickOpenDomain } from '@/components/domain/quick-open';
 import { SignalBadges } from '@/components/domain/signal-badges';
 import {
   Button,
@@ -134,7 +135,33 @@ export function DomainDetailScreen() {
                 </span>
               )}
             </div>
+
+            {/* Câu hỏi "chặn rồi thì nó nằm ở danh sách nào" không có chỗ nào trả lời,
+                và khi câu trả lời là "không ở đâu cả" thì càng phải nói ra. */}
+            {domain.status === 'blocked' && (
+              <p className="mt-1.5 text-xs">
+                {detail.data.published_files.length > 0 ? (
+                  <span className="text-slate-500 dark:text-slate-400">
+                    Nằm trong:{' '}
+                    {detail.data.published_files.map((file, i) => (
+                      <span key={file}>
+                        {i > 0 && ', '}
+                        <code className="font-mono">{file}</code>
+                      </span>
+                    ))}
+                  </span>
+                ) : (
+                  <span className="rounded bg-amber-50 px-1.5 py-0.5 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                    Đã chặn nhưng chưa nằm trong file nào — router sẽ không thấy domain này.
+                    Xuất bản lại để đưa nó vào <code className="font-mono">blocked.txt</code>.
+                  </span>
+                )}
+              </p>
+            )}
           </div>
+
+          <div className="flex flex-col items-end gap-2">
+            <QuickOpenDomain className="w-64" />
 
           {isAdmin && (
             <div className="flex flex-wrap items-center gap-1.5">
@@ -154,6 +181,7 @@ export function DomainDetailScreen() {
               )}
             </div>
           )}
+          </div>
         </div>
 
         {/* Danh sách bảo vệ thắng cả quyết định của quản trị; phải nói rõ tại sao nút

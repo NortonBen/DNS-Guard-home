@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/benji/dnsguard/internal/store"
 )
@@ -295,5 +296,183 @@ func TestChangingSinkAddressRepublishes(t *testing.T) {
 	}
 	if body := readFile(t, filepath.Join(dir, "all.txt")); !strings.Contains(body, "127.0.0.1 quangcao.vn") {
 		t.Errorf("file không được ghi lại:\n%s", body)
+	}
+}
+
+func TestBlockedListCatchesDomainsNoOtherListWould(t *testing.T) {
+	// Trường hợp thật khiến danh sách này ra đời: chặn thủ công một domain rơi vào
+	// phân loại đã tắt xuất bản. Giao diện ghi "đã chặn", nhưng domain không nằm
+	// trong file nào cả và router không bao giờ thấy nó.
+	p, s, dir := newTestPublisher(t, 0)
+	ctx := context.Background()
+
+	if _, err := s.Writer().Exec(
+		`UPDATE categories SET enabled = 0 WHERE key = 'content'`); err != nil {
+		t.Fatalf("tắt xuất bản content: %v", err)
+	}
+	blockDomainsIn(t, s, "content", "bblaa.com")
+	blockDomains(t, s, "quangcao.vn") // phân loại ads, vẫn đang bật
+
+	if _, err := p.PublishAll(ctx, nil, "test"); err != nil {
+		t.Fatalf("xuất bản: %v", err)
+	}
+
+	all := readFile(t, filepath.Join(dir, "all.txt"))
+	if strings.Contains(all, "bblaa.com") {
+		t.Error("all.txt chứa domain thuộc phân loại đã tắt — sai theo thiết kế của nó")
+	}
+
+	blocked := readFile(t, filepath.Join(dir, "blocked.txt"))
+	for _, want := range []string{"bblaa.com", "quangcao.vn"} {
+		if !strings.Contains(blocked, want) {
+			t.Errorf("blocked.txt thiếu %q:\n%s", want, blocked)
+		}
+	}
+}
+
+func TestBlockedListIncludesDomainsWithoutCategory(t *testing.T) {
+	// Domain chặn nhưng chưa có phân loại cũng rơi ra ngoài mọi file, vì truy vấn cũ
+	// dùng INNER JOIN sang bảng categories.
+	p, s, dir := newTestPublisher(t, 0)
+	ctx := context.Background()
+
+	now := store.Now()
+	if _, err := s.Writer().Exec(`
+		INSERT INTO domains (name, name_rev, etld1, status, origin,
+		                     first_seen, last_seen, created_at, updated_at)
+		VALUES ('khongphanloai.vn', 'khongphanloai.vn', 'khongphanloai.vn',
+		        'blocked', 'manual', ?, ?, ?, ?)`, now, now, now, now); err != nil {
+		t.Fatalf("tạo domain: %v", err)
+	}
+
+	if _, err := p.PublishAll(ctx, nil, "test"); err != nil {
+		t.Fatalf("xuất bản: %v", err)
+	}
+	if blocked := readFile(t, filepath.Join(dir, "blocked.txt")); !strings.Contains(blocked, "khongphanloai.vn") {
+		t.Errorf("blocked.txt thiếu domain chưa có phân loại:\n%s", blocked)
+	}
+}
+
+func TestAggregateListsKeepSeparateHistories(t *testing.T) {
+	// Cả hai file tổng hợp lưu snapshot với category_id NULL. Không phân biệt theo
+	// đường dẫn thì chúng đọc nhầm lịch sử của nhau, và lớp bảo vệ sụt giảm so sai
+	// bảng — đúng lúc nó cần chính xác nhất.
+	p, s, _ := newTestPublisher(t, 0.5)
+	ctx := context.Background()
+
+	if _, err := s.Writer().Exec(
+		`UPDATE categories SET enabled = 0 WHERE key = 'content'`); err != nil {
+		t.Fatalf("tắt content: %v", err)
+	}
+	blockDomains(t, s, "a.vn", "b.vn")                      // ads, vào cả hai file
+	blockDomainsIn(t, s, "content", "c.vn", "d.vn", "e.vn") // chỉ vào blocked.txt
+
+	results, err := p.PublishAll(ctx, nil, "test")
+	if err != nil {
+		t.Fatalf("xuất bản: %v", err)
+	}
+
+	counts := map[string]int{}
+	for _, r := range results {
+		counts[r.Category] = r.EntryCount
+	}
+	if counts["all"] != 2 {
+		t.Errorf("all.txt = %d mục, muốn 2", counts["all"])
+	}
+	if counts["blocked"] != 5 {
+		t.Errorf("blocked.txt = %d mục, muốn 5", counts["blocked"])
+	}
+
+	// Lần hai không đổi gì: cả hai phải báo không thay đổi, chứng tỏ mỗi file so với
+	// đúng lịch sử của chính nó.
+	results, err = p.PublishAll(ctx, nil, "test")
+	if err != nil {
+		t.Fatalf("xuất bản lần hai: %v", err)
+	}
+	for _, r := range results {
+		if (r.Category == "all" || r.Category == "blocked") && r.Changed {
+			t.Errorf("%s báo có thay đổi dù dữ liệu không đổi", r.Category)
+		}
+	}
+}
+
+// blockDomainsIn đưa domain vào trạng thái blocked thuộc một phân loại cho trước.
+func blockDomainsIn(t *testing.T, s *store.Store, categoryKey string, names ...string) {
+	t.Helper()
+	now := store.Now()
+	for _, name := range names {
+		if _, err := s.Writer().Exec(`
+			INSERT INTO domains (name, name_rev, etld1, status, origin, category_id,
+			                     first_seen, last_seen, created_at, updated_at)
+			VALUES (?, ?, 'example.com', 'blocked', 'manual',
+			        (SELECT id FROM categories WHERE key = ?), ?, ?, ?, ?)`,
+			name, name, categoryKey, now, now, now, now); err != nil {
+			t.Fatalf("chặn %q: %v", name, err)
+		}
+	}
+}
+
+func TestChecksumIgnoresGenerationTime(t *testing.T) {
+	// Header có mốc thời gian sinh file. Băm cả file khiến checksum đổi mỗi giây dù
+	// tập domain không đổi — và khi đó mọi thứ dựa trên checksum đều hỏng: lần nào
+	// cũng bị coi là có thay đổi, lịch sử phình lên bằng các bản giống hệt nhau, và
+	// router tải lại một danh sách y nguyên sau mỗi lần chạy.
+	p, s, _ := newTestPublisher(t, 0.5)
+	ctx := context.Background()
+	blockDomains(t, s, "quangcao.vn")
+
+	first, err := p.PublishAll(ctx, []string{"ads"}, "admin")
+	if err != nil {
+		t.Fatalf("xuất bản lần đầu: %v", err)
+	}
+
+	// Vượt qua ranh giới một giây: đây chính là điều kiện làm lỗi cũ lộ ra.
+	time.Sleep(1100 * time.Millisecond)
+
+	second, err := p.PublishAll(ctx, []string{"ads"}, "admin")
+	if err != nil {
+		t.Fatalf("xuất bản lần hai: %v", err)
+	}
+
+	if first[0].Checksum != second[0].Checksum {
+		t.Errorf("checksum đổi dù tập domain không đổi:\n  %s\n  %s",
+			first[0].Checksum, second[0].Checksum)
+	}
+	if second[0].Changed {
+		t.Error("báo có thay đổi dù tập domain không đổi")
+	}
+
+	snapshots, err := s.ListSnapshots(ctx, "ads", 10)
+	if err != nil {
+		t.Fatalf("ListSnapshots: %v", err)
+	}
+	if len(snapshots) != 1 {
+		t.Errorf("có %d snapshot, muốn 1", len(snapshots))
+	}
+}
+
+func TestChecksumStillTracksSinkAddress(t *testing.T) {
+	// Mặt còn lại: địa chỉ đích là nội dung thật, đổi nó phải kích hoạt ghi lại file.
+	p, s, _ := newTestPublisher(t, 0.5)
+	ctx := context.Background()
+	blockDomains(t, s, "quangcao.vn")
+
+	first, err := p.PublishAll(ctx, []string{"ads"}, "admin")
+	if err != nil {
+		t.Fatalf("xuất bản lần đầu: %v", err)
+	}
+	if err := s.SetSetting(ctx, store.SettingPublishSink, "127.0.0.1", "admin"); err != nil {
+		t.Fatalf("đổi địa chỉ: %v", err)
+	}
+	second, err := p.PublishAll(ctx, []string{"ads"}, "admin")
+	if err != nil {
+		t.Fatalf("xuất bản lần hai: %v", err)
+	}
+
+	if first[0].Checksum == second[0].Checksum {
+		t.Error("đổi địa chỉ đích mà checksum không đổi")
+	}
+	if !second[0].Changed {
+		t.Error("đổi địa chỉ đích mà không ghi lại file")
 	}
 }

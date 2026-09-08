@@ -635,6 +635,25 @@ giữ nguyên file cũ.
 Ghi lại file từ `snapshot_entries` của bản đó. Tạo một snapshot mới với
 `published_by = "<user> (rollback từ #812)"` — không xóa lịch sử.
 
+### Hai danh sách tổng hợp
+
+| File | Chứa gì |
+|---|---|
+| `all.txt` | Domain đang chặn thuộc các phân loại **đang bật xuất bản** |
+| `blocked.txt` | **Mọi** domain đang chặn, không lọc theo phân loại |
+
+`blocked.txt` là lưới an toàn. Truy vấn xuất bản theo phân loại lọc cả `status='blocked'`
+lẫn `categories.enabled = 1`, và nó INNER JOIN sang bảng phân loại — nên một domain
+chặn thủ công rơi vào phân loại đã tắt xuất bản, hoặc chưa có phân loại nào, sẽ không
+nằm trong bất kỳ file nào kể cả `all.txt`. Giao diện vẫn ghi "đã chặn" trong khi router
+không bao giờ thấy nó.
+
+Cả hai lưu snapshot với `category_id` NULL, nên lịch sử của chúng phân biệt theo
+`file_path`; nếu không, lớp bảo vệ sụt giảm sẽ so nhầm bảng.
+
+`GET /domains/:id` trả về `published_files` — tên các file thật sự chứa domain đó.
+Rỗng khi domain đang chặn nghĩa là quyết định chặn chưa tới được router nào.
+
 ### Endpoint file — **không cần xác thực**
 
 ```

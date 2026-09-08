@@ -2,7 +2,10 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -11,6 +14,7 @@ import (
 
 	"github.com/benji/dnsguard/internal/classify"
 	"github.com/benji/dnsguard/internal/ingest"
+	"github.com/benji/dnsguard/internal/publish"
 	"github.com/benji/dnsguard/internal/store"
 	"github.com/benji/dnsguard/internal/worker"
 )
@@ -97,6 +101,12 @@ func (s *Server) handleGetDomain(w http.ResponseWriter, r *http.Request) {
 	}
 	protectRule, protected := classify.IsProtected(domain.Name, soft)
 
+	files, err := s.publishedFilesFor(ctx, domain)
+	if err != nil {
+		fail(w, s.log, err)
+		return
+	}
+
 	// Mọi trường dạng danh sách trả về [] thay vì null: hợp đồng API nói đây là mảng,
 	// và một null lọt ra sẽ làm hỏng phía client ở chỗ khó lần ra nhất.
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -108,7 +118,45 @@ func (s *Server) handleGetDomain(w http.ResponseWriter, r *http.Request) {
 		"ips":          orEmpty(ips),
 		"protected":    protected,
 		"protect_rule": protectRule,
+		// Tên các file mà domain này thật sự xuất hiện. Rỗng khi đang chặn là dấu
+		// hiệu cần báo động: quyết định chặn không tới được router nào.
+		"published_files": orEmpty(files),
 	})
+}
+
+// publishedFilesFor trả về tên các file xuất bản có chứa domain này.
+//
+// Tính ở máy chủ chứ không để giao diện suy ra: quy tắc xuất bản nằm trong truy vấn
+// của publisher, và lặp lại nó ở tầng giao diện là cách chắc chắn để hai chỗ lệch
+// nhau sau vài lần sửa.
+func (s *Server) publishedFilesFor(ctx context.Context, d store.Domain) ([]string, error) {
+	if d.Status != store.StatusBlocked {
+		return nil, nil
+	}
+
+	// Mọi domain đang chặn đều nằm trong danh sách tổng hợp này, kể cả khi phân loại
+	// của nó đã tắt xuất bản hoặc nó chưa có phân loại nào.
+	files := []string{publish.BlockedFile}
+
+	if d.Category == nil {
+		return files, nil
+	}
+
+	var path string
+	var enabled bool
+	err := s.store.Reader().QueryRowContext(ctx,
+		`SELECT publish_path, enabled FROM categories WHERE key = ?`, d.Category.Key).
+		Scan(&path, &enabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return files, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read category publish path: %w", err)
+	}
+	if enabled {
+		files = append(files, path, publish.AggregateFile)
+	}
+	return files, nil
 }
 
 // handleDomainGraph trả về đồ thị quan hệ.

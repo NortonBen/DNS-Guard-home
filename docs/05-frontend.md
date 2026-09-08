@@ -319,6 +319,14 @@ nguồn này". Trả lời câu hỏi thực tế: có nên bỏ bớt nguồn n
 
 ### 4.8 Xuất bản `/publish`
 
+Khu địa chỉ cho router liệt kê từng phân loại đang bật, cộng hai file tổng hợp:
+`all.txt` (các phân loại đang bật) và `blocked.txt` (mọi domain đang chặn). Trang chi
+tiết domain hiển thị chính xác domain đó nằm trong những file nào, và cảnh báo khi nó
+đang chặn mà không nằm ở đâu cả.
+
+Trang chi tiết còn có ô dán nhanh: dán một domain — kể cả URL đầy đủ hay một dòng của
+file hosts — rồi Enter để mở thẳng trang của nó, không phải quay lại màn danh sách.
+
 Danh sách snapshot theo phân loại. Mỗi dòng: thời điểm, số lượng, thay đổi so với bản
 trước (`+149 / −8`), checksum rút gọn, người thực hiện.
 

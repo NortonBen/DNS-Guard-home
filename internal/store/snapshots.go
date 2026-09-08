@@ -44,6 +44,58 @@ func (s *Store) PublishTargets(ctx context.Context) ([]PublishTarget, error) {
 	return out, rows.Err()
 }
 
+// AllBlockedDomains trả về mọi domain đang chặn, không lọc theo phân loại.
+//
+// Khác BlockedDomains ở hai chỗ, và cả hai đều là lý do tồn tại của nó: không đòi
+// phân loại phải bật xuất bản, và không đòi domain phải có phân loại.
+//
+// Thiếu danh sách này thì một quyết định chặn thủ công có thể không tới được router
+// nào cả — domain rơi vào một phân loại đã tắt xuất bản, hoặc chưa có phân loại, và
+// biến mất khỏi mọi file trong khi giao diện vẫn ghi "đã chặn".
+func (s *Store) AllBlockedDomains(ctx context.Context) ([]string, error) {
+	rows, err := s.r.QueryContext(ctx, `
+		SELECT name FROM domains WHERE status = 'blocked'
+		ORDER BY name LIMIT 1000000`)
+	if err != nil {
+		return nil, fmt.Errorf("list all blocked domains: %w", err)
+	}
+	defer rows.Close()
+
+	var out []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scan blocked domain: %w", err)
+		}
+		out = append(out, name)
+	}
+	return out, rows.Err()
+}
+
+// LastAggregateSnapshot trả về bản xuất bản gần nhất của một file tổng hợp.
+//
+// Các file tổng hợp đều lưu snapshot với category_id NULL, nên phân biệt chúng phải
+// dựa vào đường dẫn file; nếu không, all.txt và blocked.txt sẽ đọc nhầm lịch sử của
+// nhau và lớp bảo vệ sụt giảm so sai bảng.
+func (s *Store) LastAggregateSnapshot(ctx context.Context, filePath string) (Snapshot, error) {
+	var snap Snapshot
+	err := s.r.QueryRowContext(ctx, `
+		SELECT s.id, '', s.entry_count, s.checksum, s.file_path,
+		       s.published_at, s.published_by
+		FROM snapshots s
+		WHERE s.category_id IS NULL AND s.file_path LIKE ?
+		ORDER BY s.published_at DESC, s.id DESC LIMIT 1`, "%"+filePath).
+		Scan(&snap.ID, &snap.CategoryKey, &snap.EntryCount, &snap.Checksum,
+			&snap.FilePath, &snap.PublishedAt, &snap.PublishedBy)
+	if err == sql.ErrNoRows {
+		return Snapshot{}, ErrNotFound
+	}
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("last aggregate snapshot: %w", err)
+	}
+	return snap, nil
+}
+
 // BlockedDomains trả về các domain sẽ nằm trong danh sách xuất bản.
 //
 // categoryID bằng 0 nghĩa là lấy tất cả phân loại đang bật, dùng cho file gộp.

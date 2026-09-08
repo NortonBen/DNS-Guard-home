@@ -18,6 +18,18 @@ import {
 import { formatDateTime, formatNumber, shortChecksum } from '@/lib/format';
 
 /** Lịch sử xuất bản: so sánh, quay lại bản cũ, và URL để dán vào router. */
+/**
+ * Hai file tổng hợp, khác nhau ở đúng một điều.
+ *
+ * all.txt gộp các phân loại đang bật xuất bản. blocked.txt chứa mọi domain đang chặn,
+ * kể cả domain thuộc phân loại đã tắt hoặc chưa có phân loại — nó là lưới an toàn để
+ * một quyết định chặn không rơi ra ngoài mọi file.
+ */
+const aggregates = [
+  { file: 'all.txt', hint: 'các phân loại đang bật' },
+  { file: 'blocked.txt', hint: 'mọi domain đang chặn' },
+];
+
 export function PublishScreen() {
   const categories = useCategories();
   const [category, setCategory] = useState('');
@@ -61,18 +73,23 @@ export function PublishScreen() {
               </Button>
             </li>
           ))}
-          <li className="flex items-center gap-2">
-            <code className="flex-1 truncate rounded bg-slate-100 px-2 py-1 font-mono text-xs dark:bg-slate-800">
-              {baseUrl}/lists/all.txt
-            </code>
-            <Button
-              variant="ghost"
-              className="px-2 py-1 text-xs"
-              onClick={() => void navigator.clipboard.writeText(`${baseUrl}/lists/all.txt`)}
-            >
-              Sao chép
-            </Button>
-          </li>
+          {aggregates.map((agg) => (
+            <li key={agg.file} className="flex items-center gap-2">
+              <code className="flex-1 truncate rounded bg-slate-100 px-2 py-1 font-mono text-xs dark:bg-slate-800">
+                {baseUrl}/lists/{agg.file}
+              </code>
+              <span className="hidden shrink-0 text-xs text-slate-500 sm:inline dark:text-slate-400">
+                {agg.hint}
+              </span>
+              <Button
+                variant="ghost"
+                className="px-2 py-1 text-xs"
+                onClick={() => void navigator.clipboard.writeText(`${baseUrl}/lists/${agg.file}`)}
+              >
+                Sao chép
+              </Button>
+            </li>
+          ))}
         </ul>
 
         {/* Thay đổi không có hiệu lực tức thì; giao diện phải nói rõ điều này thay vì

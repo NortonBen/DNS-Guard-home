@@ -96,6 +96,8 @@ export interface DomainDetail {
   protected: boolean;
   protect_rule: string;
   ips: DomainIP[];
+  /** Tên các file xuất bản thật sự chứa domain này. Rỗng khi nó không nằm ở đâu cả. */
+  published_files: string[];
 }
 
 /** Một domain đã phân giải tới địa chỉ nằm trong danh sách hạ tầng độc hại. */

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1084,4 +1085,93 @@ func categoryByKey(t *testing.T, h *harness, key string) map[string]any {
 	}
 	t.Fatalf("không tìm thấy phân loại %q", key)
 	return nil
+}
+
+func TestPublishedFilesTellsWhereABlockedDomainLands(t *testing.T) {
+	// Câu hỏi "chặn rồi thì nó nằm ở danh sách nào" trước đây không có chỗ nào trả
+	// lời, và câu trả lời có thể là "không ở đâu cả" — domain thuộc phân loại đã tắt
+	// xuất bản thì không lọt vào cả ads.txt lẫn all.txt.
+	h := newHarness(t)
+	h.login()
+	ctx := context.Background()
+
+	var adsID, contentID int64
+	if err := h.store.Reader().QueryRow(
+		`SELECT id FROM categories WHERE key = 'ads'`).Scan(&adsID); err != nil {
+		t.Fatalf("đọc ads: %v", err)
+	}
+	if err := h.store.Reader().QueryRow(
+		`SELECT id FROM categories WHERE key = 'content'`).Scan(&contentID); err != nil {
+		t.Fatalf("đọc content: %v", err)
+	}
+	if _, err := h.store.Writer().ExecContext(ctx,
+		`UPDATE categories SET enabled = 0 WHERE key = 'content'`); err != nil {
+		t.Fatalf("tắt content: %v", err)
+	}
+
+	seedCategorised(t, h, adsID, "blocked", 1)
+	seedCategorised(t, h, contentID, "blocked", 1)
+
+	// Phân loại đang bật: nằm trong file riêng, file gộp, và danh sách tổng.
+	files := publishedFilesOf(t, h, fmt.Sprintf("blocked%d-0.vidu.vn", adsID))
+	for _, want := range []string{"blocked.txt", "ads.txt", "all.txt"} {
+		if !slices.Contains(files, want) {
+			t.Errorf("domain ads thiếu %q, có %v", want, files)
+		}
+	}
+
+	// Phân loại đã tắt: chỉ còn lưới an toàn.
+	files = publishedFilesOf(t, h, fmt.Sprintf("blocked%d-0.vidu.vn", contentID))
+	if !slices.Equal(files, []string{"blocked.txt"}) {
+		t.Errorf("domain thuộc phân loại đã tắt = %v, muốn chỉ [blocked.txt]", files)
+	}
+}
+
+func TestPublishedFilesIsEmptyForDomainsNotBlocked(t *testing.T) {
+	h := newHarness(t)
+	h.login()
+
+	var adsID int64
+	if err := h.store.Reader().QueryRow(
+		`SELECT id FROM categories WHERE key = 'ads'`).Scan(&adsID); err != nil {
+		t.Fatalf("đọc ads: %v", err)
+	}
+	seedCategorised(t, h, adsID, "staging", 1)
+
+	if files := publishedFilesOf(t, h, fmt.Sprintf("staging%d-0.vidu.vn", adsID)); len(files) != 0 {
+		t.Errorf("domain chờ duyệt = %v, muốn rỗng — nó chưa được xuất bản đi đâu", files)
+	}
+}
+
+// publishedFilesOf đọc trường published_files của một domain qua API.
+func publishedFilesOf(t *testing.T, h *harness, name string) []string {
+	t.Helper()
+
+	resp, body := h.do(http.MethodGet, "/api/v1/domains?q="+name, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("tìm %q = %d: %s", name, resp.StatusCode, body)
+	}
+	var page struct {
+		Items []struct {
+			ID int64 `json:"id"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(body, &page); err != nil {
+		t.Fatalf("giải mã danh sách: %v", err)
+	}
+	if len(page.Items) == 0 {
+		t.Fatalf("không tìm thấy domain %q", name)
+	}
+
+	resp, body = h.do(http.MethodGet, fmt.Sprintf("/api/v1/domains/%d", page.Items[0].ID), nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("chi tiết = %d: %s", resp.StatusCode, body)
+	}
+	var detail struct {
+		PublishedFiles []string `json:"published_files"`
+	}
+	if err := json.Unmarshal(body, &detail); err != nil {
+		t.Fatalf("giải mã chi tiết: %v", err)
+	}
+	return detail.PublishedFiles
 }
