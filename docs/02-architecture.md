@@ -422,7 +422,7 @@ thay đổi API.
 dnsguard/
 ├── cmd/
 │   ├── dnsguard/          binary chính: API + worker + bộ nhận TZSP
-│   └── dnsguard-cli/      tiện ích: migrate, tạo user, xuất bản, sao lưu
+│   └── dnsguard-cli/      tiện ích: migrate, quản lý tài khoản, xuất bản, sao lưu
 ├── internal/
 │   ├── config/            đọc cấu hình từ biến môi trường
 │   ├── store/             toàn bộ truy cập CSDL

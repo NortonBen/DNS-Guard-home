@@ -12,6 +12,7 @@ import type {
   ThreatList,
   AddDomainResponse,
   CategoryDetail,
+  ChangePasswordResult,
   Domain,
   DomainDetail,
   Health,
@@ -123,6 +124,19 @@ export function useLogout() {
   return useMutation({
     mutationFn: () => api<void>('/auth/logout', { method: 'POST' }),
     onSuccess: () => client.clear(),
+  });
+}
+
+/**
+ * Đổi mật khẩu của chính người đang đăng nhập.
+ *
+ * Không làm mới phiên: máy chủ giữ nguyên phiên đang gọi và chỉ hủy các phiên khác,
+ * nên cookie lẫn CSRF token trong bộ nhớ vẫn còn dùng được.
+ */
+export function useChangePassword() {
+  return useMutation({
+    mutationFn: (vars: { current_password: string; new_password: string }) =>
+      api<ChangePasswordResult>('/auth/password', { method: 'POST', body: vars }),
   });
 }
 

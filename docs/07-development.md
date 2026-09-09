@@ -398,6 +398,7 @@ Thư mục `lists` không cần sao lưu — sinh lại được bằng `dnsguar
 | Danh sách rỗng sau đồng bộ | Nguồn có thể đã bị chặn vì sụt giảm bất thường — xem `last_status` |
 | Thiết bị mạng không cập nhật | `/ip dns adlist print detail`; thử `/tool fetch` thủ công |
 | CSDL phình to | `DNSGUARD_LOG_RETENTION_DAYS`; job `retention` chạy hằng ngày |
+| Không ai đăng nhập được | `dnsguard-cli reset-password -u NAME` — chạy thẳng trên CSDL nên không cần mật khẩu cũ |
 
 Bật log chi tiết bằng `DNSGUARD_LOG_LEVEL=debug`. Log là JSON cấu trúc, lọc bằng `jq`:
 

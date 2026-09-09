@@ -37,6 +37,8 @@ func main() {
 		err = cmdMigrate()
 	case "create-user":
 		err = cmdCreateUser(os.Args[2:])
+	case "reset-password":
+		err = cmdResetPassword(os.Args[2:])
 	case "publish":
 		err = cmdPublish(os.Args[2:])
 	case "backup":
@@ -65,6 +67,7 @@ func usage() {
 Cách dùng:
   dnsguard-cli migrate                        chạy migration còn thiếu
   dnsguard-cli create-user -u NAME -r ROLE    tạo tài khoản (role: admin|viewer)
+  dnsguard-cli reset-password -u NAME         đặt lại mật khẩu, hủy mọi phiên
   dnsguard-cli publish [-c ads,tracking]      xuất bản danh sách ngay
   dnsguard-cli backup -o FILE                 sao lưu toàn bộ CSDL
   dnsguard-cli import-hosts -f FILE -c KEY    nhập danh sách chặn từ file hosts
@@ -134,6 +137,65 @@ func cmdCreateUser(args []string) error {
 	}
 
 	fmt.Printf("đã tạo tài khoản %q với vai trò %s\n", *username, *role)
+	if generated {
+		fmt.Printf("mật khẩu: %s\n", *password)
+		fmt.Println("lưu lại ngay — mật khẩu không hiện lại lần nữa")
+	}
+	return nil
+}
+
+// cmdResetPassword đặt lại mật khẩu hộ một tài khoản.
+//
+// Đây là đường thoát khi không ai còn đăng nhập được: nó chạy thẳng trên CSDL nên
+// không cần mật khẩu cũ, và vì thế chỉ dùng được bởi người đã có quyền trên máy chủ.
+func cmdResetPassword(args []string) error {
+	fs := flag.NewFlagSet("reset-password", flag.ExitOnError)
+	username := fs.String("u", "", "tên đăng nhập")
+	password := fs.String("p", "", "mật khẩu mới (để trống sẽ sinh ngẫu nhiên)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *username == "" {
+		return fmt.Errorf("cần -u")
+	}
+
+	db, _, err := openStore(true)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	ctx := context.Background()
+	user, _, err := db.UserByName(ctx, *username)
+	if err != nil {
+		return fmt.Errorf("tài khoản %q: %w", *username, err)
+	}
+
+	generated := *password == ""
+	if generated {
+		if *password, err = randomPassword(); err != nil {
+			return err
+		}
+	}
+	// Cùng chính sách với đường đổi mật khẩu trên giao diện: một lối vào lỏng hơn lối
+	// kia thì chính sách chỉ còn là gợi ý.
+	if err := auth.ValidatePassword(*password); err != nil {
+		return fmt.Errorf("mật khẩu mới phải có ít nhất %d ký tự", auth.MinPasswordLen)
+	}
+
+	hash, err := auth.HashPassword(*password)
+	if err != nil {
+		return err
+	}
+	if err := db.UpdatePassword(ctx, user.ID, hash); err != nil {
+		return err
+	}
+	revoked, err := db.DeleteUserSessions(ctx, user.ID)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("đã đặt lại mật khẩu cho %q, hủy %d phiên đang mở\n", user.Username, revoked)
 	if generated {
 		fmt.Printf("mật khẩu: %s\n", *password)
 		fmt.Println("lưu lại ngay — mật khẩu không hiện lại lần nữa")

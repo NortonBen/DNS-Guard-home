@@ -357,6 +357,14 @@ export interface Session {
   csrf_token: string;
 }
 
+export interface ChangePasswordResult {
+  /**
+   * Số phiên khác bị hủy theo. Giao diện nói rõ con số này: đổi mật khẩu đá các thiết
+   * bị khác ra ngoài, và người dùng cần thấy hệ quả đó chứ không chỉ thấy "đã đổi".
+   */
+  revoked_sessions: number;
+}
+
 export interface ApiErrorBody {
   error: { code: string; message: string; details?: Record<string, unknown> };
 }

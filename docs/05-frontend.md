@@ -448,6 +448,25 @@ Màn chi tiết domain có thêm thẻ **Kết luận của AI** kèm nút *Hỏ
 khi chưa cấu hình khóa: một thẻ rỗng ở màn hình quan trọng nhất chỉ làm loãng thứ
 người dùng đang cần đọc.
 
+### 4.14 Tài khoản `/account`
+
+Thông tin tài khoản và ô đổi mật khẩu. Đây là màn duy nhất trong nhóm **Hệ thống**
+không giới hạn theo vai trò: tài khoản chỉ đọc cũng phải tự đổi được mật khẩu của
+mình, nếu không mật khẩu do quản trị viên đặt sẽ nằm nguyên đó mãi mãi. Vì vậy nó
+tách khỏi màn Cài đặt chứ không nằm thành một thẻ trong đó.
+
+Trình duyệt chỉ kiểm tra đúng thứ máy chủ không kiểm được — ô *nhập lại mật khẩu*
+không bao giờ được gửi đi. Độ dài tối thiểu và quy tắc "phải khác mật khẩu cũ" để máy
+chủ phán, tránh hai nơi giữ hai bản chính sách rồi lệch nhau.
+
+Máy chủ trả về hai mã lỗi tách theo ô nhập (`invalid_password` cho mật khẩu hiện tại,
+`password_policy` cho mật khẩu mới), nên thông báo bám đúng ô gây lỗi thay vì treo một
+dòng đỏ chung ở cuối biểu mẫu. Mật khẩu hiện tại sai trả **400**, không phải 401: lớp
+gọi API coi mọi 401 là phiên hết hạn, nên 401 ở đây sẽ đá người dùng ra chỉ vì gõ nhầm.
+
+Đổi thành công báo luôn số phiên khác vừa bị đăng xuất. Đổi mật khẩu giết các phiên
+còn lại, và đó là hệ quả người dùng cần thấy chứ không chỉ thấy "đã đổi".
+
 ## 5. Nhận diện
 
 <p align="center">

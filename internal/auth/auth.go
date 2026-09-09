@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"golang.org/x/crypto/argon2"
 
@@ -22,6 +23,19 @@ import (
 // nhân là sai tên hay sai mật khẩu. Phân biệt hai trường hợp sẽ để lộ tài khoản nào
 // tồn tại.
 var ErrInvalidCredentials = errors.New("invalid credentials")
+
+// Lỗi khi đổi mật khẩu. Tách khỏi ErrInvalidCredentials vì người gọi cần phân biệt
+// "mật khẩu mới không đạt" với "mật khẩu hiện tại sai" để báo đúng chỗ trên biểu mẫu.
+var (
+	ErrWeakPassword = errors.New("password too short")
+	ErrSamePassword = errors.New("new password matches current")
+)
+
+// MinPasswordLen là độ dài tối thiểu của mật khẩu do người dùng tự đặt.
+//
+// Argon2id đã làm việc dò từng mật khẩu tốn kém, nên phòng tuyến còn lại chỉ cần
+// chặn những mật khẩu ngắn tới mức vét cạn được bất chấp chi phí băm.
+const MinPasswordLen = 12
 
 // Tham số argon2id theo khuyến nghị OWASP. 64 MB bộ nhớ là ngưỡng cân bằng: đủ để
 // tấn công từ điển tốn kém, nhưng vẫn nằm trong ngân sách RAM của một Raspberry Pi.
@@ -146,4 +160,56 @@ func randomToken() (string, error) {
 		return "", fmt.Errorf("generate token: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+// ValidatePassword kiểm tra mật khẩu mới có đạt chính sách không.
+func ValidatePassword(password string) error {
+	// Đếm theo rune chứ không theo byte: mật khẩu tiếng Việt có dấu tốn 2-3 byte mỗi
+	// ký tự, đếm byte sẽ cho qua một mật khẩu ngắn hơn ý định của chính sách.
+	if utf8.RuneCountInString(password) < MinPasswordLen {
+		return ErrWeakPassword
+	}
+	return nil
+}
+
+// ChangePassword đổi mật khẩu sau khi xác minh mật khẩu hiện tại, rồi hủy mọi phiên
+// khác của tài khoản đó.
+//
+// keepTokenHash là băm token của phiên đang gọi: nó sống sót để người dùng không bị
+// đá ra ngay khi vừa đổi mật khẩu thành công.
+// Trả về số phiên khác đã bị hủy, để giao diện nói rõ vừa có bao nhiêu thiết bị bị
+// đăng xuất — người dùng cần thấy hệ quả đó chứ không chỉ thấy "đã đổi".
+func (s *Service) ChangePassword(ctx context.Context, userID int64, current, next, keepTokenHash string) (int64, error) {
+	if err := ValidatePassword(next); err != nil {
+		return 0, err
+	}
+
+	u, hash, err := s.store.UserByID(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
+	if !u.Active {
+		return 0, ErrInvalidCredentials
+	}
+	if !VerifyPassword(current, hash) {
+		return 0, ErrInvalidCredentials
+	}
+	// Chặn sau khi đã xác minh mật khẩu cũ: kiểm tra trước sẽ cho biết mật khẩu đoán
+	// có trùng mật khẩu thật hay không mà không cần biết mật khẩu hiện tại.
+	if VerifyPassword(next, hash) {
+		return 0, ErrSamePassword
+	}
+
+	newHash, err := HashPassword(next)
+	if err != nil {
+		return 0, err
+	}
+	if err := s.store.UpdatePassword(ctx, userID, newHash); err != nil {
+		return 0, err
+	}
+	revoked, err := s.store.DeleteUserSessionsExcept(ctx, userID, keepTokenHash)
+	if err != nil {
+		return 0, err
+	}
+	return revoked, nil
 }

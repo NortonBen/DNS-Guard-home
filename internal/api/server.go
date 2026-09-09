@@ -113,6 +113,7 @@ func (s *Server) Handler() http.Handler {
 
 			r.Get("/auth/me", s.handleMe)
 			r.Post("/auth/logout", s.handleLogout)
+			r.Post("/auth/password", s.handleChangePassword)
 
 			r.Get("/events", s.handleEvents)
 

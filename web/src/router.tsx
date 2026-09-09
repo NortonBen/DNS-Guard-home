@@ -98,6 +98,12 @@ const settingsRoute = createRoute({
   component: lazyRouteComponent(() => import('@/routes/settings'), 'SettingsScreen'),
 });
 
+const accountRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/account',
+  component: lazyRouteComponent(() => import('@/routes/account'), 'AccountScreen'),
+});
+
 const aiRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/ai',
@@ -129,6 +135,7 @@ const routeTree = rootRoute.addChildren([
   networkRoute,
   resourcesRoute,
   settingsRoute,
+  accountRoute,
   lookupRoute,
   aiRoute,
   ipForensicsRoute,

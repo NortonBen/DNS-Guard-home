@@ -119,7 +119,7 @@ dụng. ✅ Đảm bảo bằng tính thuần túy của `Score`, có test riên
 
 - [x] Vai trò `viewer`, trang tra cứu, yêu cầu mở chặn
 - [x] Job xóa dữ liệu quá hạn cho mọi bảng theo chính sách ở [03 §10](03-data-model.md)
-- [x] `dnsguard-cli`: `migrate`, `create-user`, `publish`, `backup`, `import-hosts`
+- [x] `dnsguard-cli`: `migrate`, `create-user`, `reset-password`, `publish`, `backup`, `import-hosts`
 - [x] Chế độ SQLite — là chế độ duy nhất, không còn là phương án thay thế
 - [x] Ảnh Docker multi-arch, biên dịch chéo arm64 bằng hai biến môi trường
 - [x] `/metrics` Prometheus, bảo vệ bằng bearer token tùy chọn

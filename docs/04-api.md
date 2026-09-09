@@ -29,7 +29,7 @@ Mọi lỗi trả về cùng cấu trúc:
 
 | HTTP | `code` tiêu biểu | Khi nào |
 |---|---|---|
-| 400 | `invalid_input`, `invalid_domain` | Đầu vào sai định dạng |
+| 400 | `invalid_input`, `invalid_domain`, `invalid_password`, `password_policy` | Đầu vào sai định dạng |
 | 401 | `unauthenticated` | Thiếu phiên hoặc phiên hết hạn |
 | 403 | `forbidden`, `domain_protected` | Không đủ quyền, hoặc vi phạm quy tắc nghiệp vụ |
 | 404 | `not_found` | Không tìm thấy tài nguyên |
@@ -106,6 +106,32 @@ Giới hạn: 5 lần thất bại / IP / 15 phút.
   "csrf_token": "…"
 }
 ```
+
+### `POST /auth/password`
+
+Đổi mật khẩu của chính người đang đăng nhập. Mọi vai trò đều gọi được, kể cả
+`viewer`: nếu chỉ admin đổi được thì mật khẩu do admin đặt sẽ nằm nguyên đó mãi mãi.
+
+```json
+{ "current_password": "…", "new_password": "…" }
+```
+
+**200**
+```json
+{ "revoked_sessions": 2 }
+```
+
+Đổi thành công sẽ hủy mọi phiên khác của tài khoản đó và giữ lại phiên đang gọi;
+`revoked_sessions` là số phiên vừa bị đăng xuất.
+
+**400** `invalid_password` khi mật khẩu hiện tại sai — **không** dùng 401, vì giao
+diện coi mọi 401 là phiên hết hạn và sẽ đá người dùng ra chỉ vì gõ nhầm.
+
+**400** `password_policy` khi mật khẩu mới ngắn hơn 12 ký tự (đếm theo ký tự, không
+theo byte) hoặc trùng mật khẩu hiện tại. Trường hợp quá ngắn kèm
+`details.min_length`.
+
+Giới hạn: dùng chung bộ đếm với `/auth/login` — 5 lần thất bại / IP / 15 phút.
 
 ---
 

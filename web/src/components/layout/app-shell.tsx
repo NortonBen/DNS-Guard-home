@@ -60,7 +60,11 @@ const navigation: NavGroup[] = [
   },
   {
     label: 'Hệ thống',
-    items: [{ to: '/settings', label: 'Cài đặt', adminOnly: true }],
+    items: [
+      { to: '/settings', label: 'Cài đặt', adminOnly: true },
+      // Không adminOnly: tài khoản chỉ đọc cũng phải tự đổi được mật khẩu của mình.
+      { to: '/account', label: 'Tài khoản' },
+    ],
   },
 ];
 

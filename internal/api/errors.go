@@ -29,6 +29,10 @@ const (
 	CodeInternal        = "internal"
 	CodeHighRank        = "high_rank"
 	CodeDuplicate       = "duplicate"
+	// Hai mã đổi mật khẩu tách nhau theo ô nhập bị lỗi: một cho ô mật khẩu hiện tại,
+	// một cho ô mật khẩu mới, để giao diện gắn thông báo đúng chỗ.
+	CodeInvalidPassword = "invalid_password"
+	CodePasswordPolicy  = "password_policy"
 )
 
 // apiError là cấu trúc lỗi duy nhất mà API trả về.

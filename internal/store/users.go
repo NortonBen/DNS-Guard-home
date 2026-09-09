@@ -62,6 +62,22 @@ func (s *Store) UserByName(ctx context.Context, username string) (User, string, 
 	return u, hash, nil
 }
 
+// UserByID trả về tài khoản kèm băm mật khẩu, dùng khi đã biết phiên là của ai.
+func (s *Store) UserByID(ctx context.Context, id int64) (User, string, error) {
+	var u User
+	var hash string
+	err := s.r.QueryRowContext(ctx,
+		`SELECT id, username, role, active, last_login_at, password_hash FROM users WHERE id = ?`,
+		id).Scan(&u.ID, &u.Username, &u.Role, &u.Active, &u.LastLoginAt, &hash)
+	if err == sql.ErrNoRows {
+		return User{}, "", ErrNotFound
+	}
+	if err != nil {
+		return User{}, "", fmt.Errorf("lookup user %d: %w", id, err)
+	}
+	return u, hash, nil
+}
+
 // CountUsers đếm số tài khoản, dùng để quyết định có cần tạo admin đầu tiên không.
 func (s *Store) CountUsers(ctx context.Context) (int, error) {
 	var n int
@@ -131,4 +147,44 @@ func (s *Store) PruneSessions(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("prune sessions: %w", err)
 	}
 	return res.RowsAffected()
+}
+
+// UpdatePassword thay băm mật khẩu của một tài khoản.
+func (s *Store) UpdatePassword(ctx context.Context, userID int64, passwordHash string) error {
+	res, err := s.w.ExecContext(ctx,
+		`UPDATE users SET password_hash = ? WHERE id = ?`, passwordHash, userID)
+	if err != nil {
+		return fmt.Errorf("update password: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("update password rows: %w", err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// DeleteUserSessionsExcept hủy mọi phiên của một tài khoản, trừ phiên đang gọi.
+//
+// Đổi mật khẩu thường là phản ứng với nghi ngờ lộ mật khẩu, nên các phiên khác phải
+// chết theo — nếu không, kẻ đã cầm cookie cũ vẫn vào được và việc đổi mật khẩu chẳng
+// ngăn được gì. Giữ lại phiên hiện tại để người dùng không tự đá mình ra ngoài.
+func (s *Store) DeleteUserSessionsExcept(ctx context.Context, userID int64, keepTokenHash string) (int64, error) {
+	res, err := s.w.ExecContext(ctx,
+		`DELETE FROM sessions WHERE user_id = ? AND token <> ?`, userID, keepTokenHash)
+	if err != nil {
+		return 0, fmt.Errorf("delete other sessions: %w", err)
+	}
+	return res.RowsAffected()
+}
+
+// DeleteUserSessions hủy toàn bộ phiên của một tài khoản.
+//
+// Dùng khi quản trị viên đặt lại mật khẩu hộ: ở đó không có phiên nào đáng giữ lại,
+// và lý do đặt lại thường chính là nghi ngờ ai đó đang giữ phiên của tài khoản này.
+func (s *Store) DeleteUserSessions(ctx context.Context, userID int64) (int64, error) {
+	// Không có băm token nào rỗng, nên "giữ lại chuỗi rỗng" nghĩa là không giữ gì.
+	return s.DeleteUserSessionsExcept(ctx, userID, "")
 }

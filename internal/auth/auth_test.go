@@ -92,3 +92,23 @@ func TestHashTokenIsStableAndOpaque(t *testing.T) {
 		t.Errorf("độ dài băm = %d, muốn 64", len(first))
 	}
 }
+
+// Chính sách độ dài đếm theo ký tự chứ không theo byte: mật khẩu tiếng Việt có dấu
+// tốn 2-3 byte mỗi ký tự, nên đếm byte sẽ cho qua mật khẩu ngắn hơn ý định.
+func TestValidatePasswordCountsRunesNotBytes(t *testing.T) {
+	// Đúng 11 ký tự nhưng 22 byte: nếu đếm byte thì mật khẩu này lọt qua.
+	short := "đãđãđãđãđãđ"
+	if got := len([]rune(short)); got != MinPasswordLen-1 {
+		t.Fatalf("dữ liệu thử sai: %d ký tự, cần %d", got, MinPasswordLen-1)
+	}
+	if len(short) < MinPasswordLen {
+		t.Fatalf("dữ liệu thử sai: %d byte, cần nhiều hơn %d", len(short), MinPasswordLen)
+	}
+	if err := ValidatePassword(short); err != ErrWeakPassword {
+		t.Errorf("mật khẩu %d ký tự = %v, muốn ErrWeakPassword", MinPasswordLen-1, err)
+	}
+
+	if err := ValidatePassword(short + "ã"); err != nil {
+		t.Errorf("mật khẩu %d ký tự = %v, muốn hợp lệ", MinPasswordLen, err)
+	}
+}
